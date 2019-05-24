@@ -18,10 +18,10 @@ var service = moleculer.ServiceSchema{
 	},
 	Events: []moleculer.Event{
 		{
-			//event fired by the cqrs mixin read pump.
+			//event fired by the CQRS mixin read pump.
 			//it keeps checking for new events and when there
 			//are any, it emits this event.
-			Name:    "property.created.saved",
+			Name:    "property.created",
 			Handler: propertyCreated,
 		},
 	},

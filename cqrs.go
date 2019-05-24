@@ -4,13 +4,18 @@ import (
 	"strings"
 	"time"
 
-	"github.com/moleculer-go/store/sqlite"
-
 	"github.com/moleculer-go/moleculer"
 	"github.com/moleculer-go/moleculer/payload"
 	"github.com/moleculer-go/moleculer/serializer"
-	"github.com/moleculer-go/store"
 	log "github.com/sirupsen/logrus"
+)
+
+const (
+	StatusCreated    = 0
+	StatusProcessing = 1
+	StatusComplete   = 2
+	StatusFailed     = 3
+	StatusRetrying   = 4
 )
 
 type EventStore struct {
@@ -29,17 +34,15 @@ func Store(name string) *EventStore {
 	}
 }
 
-func (e *EventStore) saveEvent(name string, event moleculer.Payload) {
-
-}
-
-func (e *EventStore) started(c moleculer.BrokerContext, svc moleculer.ServiceSchema) {
+// serviceStarted host service started.
+func (e *EventStore) serviceStarted(c moleculer.BrokerContext, svc moleculer.ServiceSchema) {
 	e.brokerContext = c
 	e.serviceSchema = svc
 	e.logger = c.Logger().WithField("cqrs", e.name)
 	e.serializer = serializer.CreateJSONSerializer(e.logger)
-	e.createStoreService()
+	e.createService()
 	c.Publish(e.storeService)
+	c.WaitFor(e.storeService.Name)
 }
 
 func (e *EventStore) settings() map[string]string {
@@ -63,75 +66,8 @@ func (e *EventStore) resolveSQLiteURI() string {
 	return "file://" + folder
 }
 
-// storeColumns return the columns for the event store table
-func (e *EventStore) storeColumns() []sqlite.Column {
-	defaultCols := []sqlite.Column{
-		{
-			Name: "event",
-			Type: "string",
-		},
-		{
-			Name: "created",
-			Type: "integer",
-		},
-		{
-			Name: "updated",
-			Type: "integer",
-		},
-		{
-			Name: "status",
-			Type: "integer",
-		},
-		{
-			Name: "payload",
-			Type: "[]byte",
-		},
-	}
-	s := e.settings()
-	extraFields, hasExtraFields := s["extraFields"]
-	if hasExtraFields {
-		for _, f := range strings.Split(extraFields, ",") {
-			defaultCols = append(defaultCols, sqlite.Column{
-				Name: f,
-				Type: "string",
-			})
-		}
-	}
-	return defaultCols
-}
-
-func (e *EventStore) createStoreService() {
-	e.storeService = moleculer.ServiceSchema{
-		Name: e.name + "_store",
-		Mixins: []moleculer.Mixin{store.Mixin(&sqlite.Adapter{
-			URI:     e.resolveSQLiteURI(),
-			Table:   e.name + "_store",
-			Columns: e.storeColumns(),
-		})},
-	}
-}
-
-const (
-	StatusCreated    = 0
-	StatusProcessing = 1
-	StatusComplete   = 2
-	StatusFailed     = 3
-	StatusRetrying   = 4
-)
-
-// validExtras check if all fields in the extra map are valid
-// (i.e. exists in the settings cqrs.extraFields )
-func (e *EventStore) validExtras(extra map[string]interface{}) bool {
-	extraFields, hasExtraFields := e.settings()["extraFields"]
-	if !hasExtraFields || len(extra) == 0 {
-		return false
-	}
-	for key, _ := range extra {
-		if strings.Index(extraFields, key) == -1 {
-			return false
-		}
-	}
-	return true
+func (e *EventStore) createService() {
+	e.storeService = createStoreService(e.name+"_store", e.settings()["extraFields"], e.resolveSQLiteURI())
 }
 
 // parseExtraParams extract valid extra parameters
@@ -150,8 +86,23 @@ func (e *EventStore) parseExtraParams(params []map[string]interface{}) map[strin
 	return map[string]interface{}{}
 }
 
-// Save save the action's payload as an event.
-// the extraParams are fields to be included in the event record.
+// validExtras check if all fields in the extra map are valid
+// (i.e. exists in the settings cqrs.extraFields )
+func (e *EventStore) validExtras(extra map[string]interface{}) bool {
+	extraFields, hasExtraFields := e.settings()["extraFields"]
+	if !hasExtraFields || len(extra) == 0 {
+		return false
+	}
+	for key, _ := range extra {
+		if strings.Index(extraFields, key) == -1 {
+			return false
+		}
+	}
+	return true
+}
+
+// Save create an action handler that saves the action's payload as an event.
+// extraParams are label=value to be saved in the event record.
 // if it fails to save the event to the store it emits the event eventName.failed
 func (e *EventStore) Save(eventName string, extraParams ...map[string]interface{}) moleculer.ActionHandler {
 	return func(c moleculer.Context, p moleculer.Payload) interface{} {
@@ -186,6 +137,6 @@ func (e *EventStore) Save(eventName string, extraParams ...map[string]interface{
 func (e *EventStore) Mixin() moleculer.Mixin {
 	return moleculer.Mixin{
 		Name:    "cqrs-mixin",
-		Started: e.started,
+		Started: e.serviceStarted,
 	}
 }
