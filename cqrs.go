@@ -1,0 +1,191 @@
+package cqrs
+
+import (
+	"strings"
+	"time"
+
+	"github.com/moleculer-go/store/sqlite"
+
+	"github.com/moleculer-go/moleculer"
+	"github.com/moleculer-go/moleculer/payload"
+	"github.com/moleculer-go/moleculer/serializer"
+	"github.com/moleculer-go/store"
+	log "github.com/sirupsen/logrus"
+)
+
+type EventStore struct {
+	name         string
+	storeService moleculer.ServiceSchema
+
+	brokerContext moleculer.BrokerContext
+	serviceSchema moleculer.ServiceSchema
+	serializer    serializer.Serializer
+	logger        *log.Entry
+}
+
+func Store(name string) *EventStore {
+	return &EventStore{
+		name: name,
+	}
+}
+
+func (e *EventStore) saveEvent(name string, event moleculer.Payload) {
+
+}
+
+func (e *EventStore) started(c moleculer.BrokerContext, svc moleculer.ServiceSchema) {
+	e.brokerContext = c
+	e.serviceSchema = svc
+	e.logger = c.Logger().WithField("cqrs", e.name)
+	e.serializer = serializer.CreateJSONSerializer(e.logger)
+	e.createStoreService()
+	c.Publish(e.storeService)
+}
+
+func (e *EventStore) settings() map[string]string {
+	setts, ok := e.serviceSchema.Settings["cqrs"]
+	if ok {
+		sm, ok := setts.(map[string]string)
+		if ok {
+			return sm
+		}
+	}
+	return map[string]string{}
+}
+
+// resolveSQLiteURI check if is memory of file based db.
+func (e *EventStore) resolveSQLiteURI() string {
+	s := e.settings()
+	folder := s["sqliteFolder"]
+	if folder == "" || folder == "memory" {
+		return "file:memory:?mode=memory"
+	}
+	return "file://" + folder
+}
+
+// storeColumns return the columns for the event store table
+func (e *EventStore) storeColumns() []sqlite.Column {
+	defaultCols := []sqlite.Column{
+		{
+			Name: "event",
+			Type: "string",
+		},
+		{
+			Name: "created",
+			Type: "integer",
+		},
+		{
+			Name: "updated",
+			Type: "integer",
+		},
+		{
+			Name: "status",
+			Type: "integer",
+		},
+		{
+			Name: "payload",
+			Type: "[]byte",
+		},
+	}
+	s := e.settings()
+	extraFields, hasExtraFields := s["extraFields"]
+	if hasExtraFields {
+		for _, f := range strings.Split(extraFields, ",") {
+			defaultCols = append(defaultCols, sqlite.Column{
+				Name: f,
+				Type: "string",
+			})
+		}
+	}
+	return defaultCols
+}
+
+func (e *EventStore) createStoreService() {
+	e.storeService = moleculer.ServiceSchema{
+		Name: e.name + "_store",
+		Mixins: []moleculer.Mixin{store.Mixin(&sqlite.Adapter{
+			URI:     e.resolveSQLiteURI(),
+			Table:   e.name + "_store",
+			Columns: e.storeColumns(),
+		})},
+	}
+}
+
+const (
+	StatusCreated    = 0
+	StatusProcessing = 1
+	StatusComplete   = 2
+	StatusFailed     = 3
+	StatusRetrying   = 4
+)
+
+// validExtras check if all fields in the extra map are valid
+// (i.e. exists in the settings cqrs.extraFields )
+func (e *EventStore) validExtras(extra map[string]interface{}) bool {
+	extraFields, hasExtraFields := e.settings()["extraFields"]
+	if !hasExtraFields || len(extra) == 0 {
+		return false
+	}
+	for key, _ := range extra {
+		if strings.Index(extraFields, key) == -1 {
+			return false
+		}
+	}
+	return true
+}
+
+// parseExtraParams extract valid extra parameters
+func (e *EventStore) parseExtraParams(params []map[string]interface{}) map[string]interface{} {
+	if len(params) > 0 {
+		extra := map[string]interface{}{}
+		for _, item := range params {
+			for name, value := range item {
+				extra[name] = value
+			}
+		}
+		if len(extra) > 0 && e.validExtras(extra) {
+			return extra
+		}
+	}
+	return map[string]interface{}{}
+}
+
+// Save save the action's payload as an event.
+// the extraParams are fields to be included in the event record.
+// if it fails to save the event to the store it emits the event eventName.failed
+func (e *EventStore) Save(eventName string, extraParams ...map[string]interface{}) moleculer.ActionHandler {
+	return func(c moleculer.Context, p moleculer.Payload) interface{} {
+		event := map[string]interface{}{
+			"event":   eventName,
+			"created": time.Now().Unix(),
+			"status":  StatusCreated,
+		}
+		//merge event with params
+		extra := e.parseExtraParams(extraParams)
+		if len(extra) > 0 {
+			for name, value := range extra {
+				event[name] = value
+			}
+		}
+		event["payload"] = e.serializer.PayloadToBytes(p)
+
+		//save to the event store
+		r := <-c.Call(e.storeService.Name+".create", event)
+		if r.IsError() {
+			c.Emit(
+				eventName+".failed",
+				payload.Empty().Add("error", r).Add("event", event),
+			)
+			return r
+		}
+		return r
+	}
+}
+
+// Mixin return the mixin schema for CQRS plugin
+func (e *EventStore) Mixin() moleculer.Mixin {
+	return moleculer.Mixin{
+		Name:    "cqrs-mixin",
+		Started: e.started,
+	}
+}
