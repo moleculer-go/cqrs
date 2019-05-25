@@ -10,6 +10,14 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
+const (
+	StatusCreated    = 0
+	StatusProcessing = 1
+	StatusComplete   = 2
+	StatusFailed     = 3
+	StatusRetrying   = 4
+)
+
 func EventStore(name string, createAdapter AdapterFactory, fields ...map[string]interface{}) EventStorer {
 	return &eventStore{
 		name:          name,
@@ -39,13 +47,41 @@ func (e *eventStore) Mixin() moleculer.Mixin {
 	}
 }
 
+//storeServiceStarted event store started.
+func (e *eventStore) storeServiceStarted(c moleculer.BrokerContext, svc moleculer.ServiceSchema) {
+	e.storeService = svc
+	go e.dispatchEvents()
+}
+
+//fetchNextEvent return the next event to be processed.
+// blocks until there is a event available.
+// also checks for retry events.
+func (e *eventStore) fetchNextEvent() moleculer.Payload {
+	event := payload.Empty()
+	time.Sleep(time.Second) //TODO implement fetch here
+	return event
+}
+
+func (e *eventStore) saveEvent(event moleculer.Payload) {
+
+}
+
+//dispatchEvents read events from the store and dispatch events.
+func (e *eventStore) dispatchEvents() {
+	for {
+		event := e.fetchNextEvent()
+		e.brokerContext.Emit(event.Get("event").String(), event)
+		e.saveEvent(event.Add("status", StatusComplete))
+	}
+}
+
 // parentServiceStarted parent service started.
 func (e *eventStore) parentServiceStarted(c moleculer.BrokerContext, svc moleculer.ServiceSchema) {
 	e.brokerContext = c
 	e.parentService = svc
 	e.logger = c.Logger().WithField("eventStore", e.name)
 	e.serializer = serializer.CreateJSONSerializer(e.logger)
-	e.createService()
+	e.createEventStoreService()
 	c.Publish(e.storeService)
 	c.WaitFor(e.storeService.Name)
 }
@@ -61,15 +97,13 @@ func (e *eventStore) settings() map[string]interface{} {
 	return map[string]interface{}{}
 }
 
-func (e *eventStore) createService() {
+func (e *eventStore) createEventStoreService() {
 	name := e.name + "EventStore"
 	adapter := e.createAdapter(name, e.fields(), e.settings())
 	e.storeService = moleculer.ServiceSchema{
-		Name:   name,
-		Mixins: []moleculer.Mixin{store.Mixin(adapter)},
-		Started: func(c moleculer.BrokerContext, svc moleculer.ServiceSchema) {
-
-		},
+		Name:    name,
+		Mixins:  []moleculer.Mixin{store.Mixin(adapter)},
+		Started: e.storeServiceStarted,
 	}
 }
 
@@ -135,7 +169,9 @@ func (e *eventStore) validExtras(extras map[string]interface{}) bool {
 // fields return a map with fields that this event store needs in the adapter
 func (e *eventStore) fields() map[string]interface{} {
 	f := map[string]interface{}{
-		"event":   "string",
+		"event": "string",
+		//target target event to be emitted by the dispatcher
+		"target":  "string",
 		"created": "integer",
 		"updated": "integer",
 		"status":  "integer",

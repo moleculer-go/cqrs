@@ -5,14 +5,6 @@ import (
 	"github.com/moleculer-go/store"
 )
 
-const (
-	StatusCreated    = 0
-	StatusProcessing = 1
-	StatusComplete   = 2
-	StatusFailed     = 3
-	StatusRetrying   = 4
-)
-
 type AdapterFactory func(name string, fields, settings map[string]interface{}) store.Adapter
 
 type Transformer func(context moleculer.Context, params moleculer.Payload) moleculer.Payload
