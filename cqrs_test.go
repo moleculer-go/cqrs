@@ -2,6 +2,8 @@ package cqrs
 
 import (
 	"github.com/moleculer-go/moleculer/serializer"
+	"github.com/moleculer-go/store"
+	"github.com/moleculer-go/store/sqlite"
 
 	"github.com/moleculer-go/moleculer"
 	"github.com/moleculer-go/moleculer/broker"
@@ -11,16 +13,25 @@ import (
 
 var _ = Describe("CQRS Pluggin", func() {
 	logLevel := "debug"
+	adapterFactory := func(fields map[string]interface{}) AdapterFactory {
+		return func(name string, cqrsFields, settings map[string]interface{}) store.Adapter {
+			return &sqlite.Adapter{
+				URI:     "file:memory:?mode=memory",
+				Table:   name,
+				Columns: FieldsToSQLiteColumns(fields, cqrsFields),
+			}
+		}
+	}
 	var bkr *broker.ServiceBroker
 	createBroker := func() *broker.ServiceBroker {
-		eventStore := Store("property")
+		eventStore := EventStore("property", adapterFactory(map[string]interface{}{}))
 		service := moleculer.ServiceSchema{
 			Name:   "property",
 			Mixins: []moleculer.Mixin{eventStore.Mixin()},
 			Actions: []moleculer.Action{
 				{
 					Name:    "create",
-					Handler: eventStore.Save("property.created"),
+					Handler: eventStore.NewEvent("property.created"),
 				},
 			},
 		}
@@ -65,7 +76,7 @@ var _ = Describe("CQRS Pluggin", func() {
 		Expect(p.Get("sourceSite").String()).Should(Equal("HOMEAWAY_US"))
 	})
 
-	It("should process incoming events", func(done Done) {
+	FIt("should process incoming events", func(done Done) {
 		propertyCreated := make(chan moleculer.Payload, 1)
 		bkr.Publish(moleculer.ServiceSchema{
 			Name: "test_incoming_events",
