@@ -27,16 +27,20 @@ func EventStore(name string, createAdapter AdapterFactory, fields ...map[string]
 }
 
 type eventStore struct {
-	name          string
-	storeService  moleculer.ServiceSchema
-	createAdapter AdapterFactory
+	name              string
+	eventStoreService moleculer.ServiceSchema
+	eventStoreAdapter store.Adapter
+	createAdapter     AdapterFactory
 
 	extraFields map[string]interface{}
 
-	brokerContext moleculer.BrokerContext
-	parentService moleculer.ServiceSchema
-	serializer    serializer.Serializer
-	logger        *log.Entry
+	brokerContext     moleculer.BrokerContext
+	parentService     moleculer.ServiceSchema
+	serializer        serializer.Serializer
+	logger            *log.Entry
+	stopping          bool
+	dispatchBatchSize int
+	poolingInterval   time.Duration
 }
 
 // Mixin return the mixin schema for CQRS plugin
@@ -49,29 +53,54 @@ func (e *eventStore) Mixin() moleculer.Mixin {
 
 //storeServiceStarted event store started.
 func (e *eventStore) storeServiceStarted(c moleculer.BrokerContext, svc moleculer.ServiceSchema) {
-	e.storeService = svc
+	e.eventStoreService = svc
+	//TODO get from settings
+	e.dispatchBatchSize = 10
+	e.poolingInterval = time.Second
 	go e.dispatchEvents()
+}
+
+//storeServiceStopped
+func (e *eventStore) storeServiceStopped(c moleculer.BrokerContext, svc moleculer.ServiceSchema) {
+	e.stopping = true
 }
 
 //fetchNextEvent return the next event to be processed.
 // blocks until there is a event available.
 // also checks for retry events.
-func (e *eventStore) fetchNextEvent() moleculer.Payload {
-	event := payload.Empty()
-	time.Sleep(time.Second) //TODO implement fetch here
-	return event
-}
-
-func (e *eventStore) saveEvent(event moleculer.Payload) {
-
+func (e *eventStore) fetchNextEvents(limit int) moleculer.Payload {
+	for {
+		events := e.eventStoreAdapter.FindAndUpdate(payload.New(map[string]interface{}{
+			"query":  map[string]interface{}{"status": StatusCreated},
+			"sort":   "created -version",
+			"limit":  limit,
+			"update": map[string]interface{}{"status": StatusProcessing},
+		}))
+		if events.Len() > 0 {
+			return events
+		}
+		if e.stopping {
+			return payload.Empty()
+		}
+		time.Sleep(e.poolingInterval)
+	}
 }
 
 //dispatchEvents read events from the store and dispatch events.
 func (e *eventStore) dispatchEvents() {
 	for {
-		event := e.fetchNextEvent()
-		e.brokerContext.Emit(event.Get("event").String(), event)
-		e.saveEvent(event.Add("status", StatusComplete))
+		events := e.fetchNextEvents(e.dispatchBatchSize)
+		for _, event := range events.Array() {
+			e.brokerContext.Emit(event.Get("event").String(), event)
+			e.eventStoreAdapter.Update(payload.New(map[string]interface{}{
+				"id":      event.Get("id"),
+				"status":  StatusComplete,
+				"updated": time.Now().Unix(),
+			}))
+			if e.stopping {
+				return
+			}
+		}
 	}
 }
 
@@ -82,8 +111,8 @@ func (e *eventStore) parentServiceStarted(c moleculer.BrokerContext, svc molecul
 	e.logger = c.Logger().WithField("eventStore", e.name)
 	e.serializer = serializer.CreateJSONSerializer(e.logger)
 	e.createEventStoreService()
-	c.Publish(e.storeService)
-	c.WaitFor(e.storeService.Name)
+	c.Publish(e.eventStoreService)
+	c.WaitFor(e.eventStoreService.Name)
 }
 
 func (e *eventStore) settings() map[string]interface{} {
@@ -99,11 +128,12 @@ func (e *eventStore) settings() map[string]interface{} {
 
 func (e *eventStore) createEventStoreService() {
 	name := e.name + "EventStore"
-	adapter := e.createAdapter(name, e.fields(), e.settings())
-	e.storeService = moleculer.ServiceSchema{
+	e.eventStoreAdapter = e.createAdapter(name, e.fields(), e.settings())
+	e.eventStoreService = moleculer.ServiceSchema{
 		Name:    name,
-		Mixins:  []moleculer.Mixin{store.Mixin(adapter)},
+		Mixins:  []moleculer.Mixin{store.Mixin(e.eventStoreAdapter)},
 		Started: e.storeServiceStarted,
+		Stopped: e.storeServiceStopped,
 	}
 }
 
@@ -128,7 +158,7 @@ func (e *eventStore) NewEvent(eventName string, extraParams ...map[string]interf
 		event["payload"] = e.serializer.PayloadToBytes(p)
 
 		//save to the event store
-		r := <-c.Call(e.storeService.Name+".create", event)
+		r := <-c.Call(e.eventStoreService.Name+".create", event)
 		if r.IsError() {
 			c.Emit(
 				eventName+".failed",
@@ -169,13 +199,13 @@ func (e *eventStore) validExtras(extras map[string]interface{}) bool {
 // fields return a map with fields that this event store needs in the adapter
 func (e *eventStore) fields() map[string]interface{} {
 	f := map[string]interface{}{
-		"event": "string",
-		//target target event to be emitted by the dispatcher
-		"target":  "string",
-		"created": "integer",
-		"updated": "integer",
-		"status":  "integer",
-		"payload": "[]byte",
+		"event":      "string",
+		"version":    "integer",
+		"created":    "integer",
+		"updated":    "integer",
+		"status":     "integer",
+		"payload":    "[]byte",
+		"aggregates": "[]string",
 	}
 	if len(e.extraFields) > 0 {
 		for k, v := range e.extraFields {
