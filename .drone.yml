@@ -1,0 +1,20 @@
+kind: pipeline
+name: default
+
+platform:
+  os: linux
+  arch: amd64
+
+steps:
+  - name: tests
+    image: golang
+    environment:
+      CODECOV_TOKEN:
+        from_secret: CODECOV_TOKEN
+      COVERALLS_TOKEN:
+        from_secret: COVERALLS_TOKEN
+    commands:
+      - go run github.com/onsi/ginkgo/ginkgo -r --randomizeAllSpecs --failFast --cover --trace
+      - go run github.com/modocache/gover ./ coverage.txt
+      - curl -s https://codecov.io/bash | bash || echo "Failed to upload to codecov.io!"
+      - go run github.com/mattn/goveralls -coverprofile=coverage.txt -service=drone.io || echo "Failed to upload to coverrals!"
