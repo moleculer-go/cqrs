@@ -161,7 +161,38 @@ var _ = Describe("CQRS Pluggin", func() {
 
 			bkr.Stop()
 			close(done)
-		}, 10)
+		}, 4)
+
+		It("should store extra fields in the event", func(done Done) {
+			eventStore := EventStore("user", adapterFactory(map[string]interface{}{}), map[string]interface{}{
+				"tag": "string",
+			})
+			service := moleculer.ServiceSchema{
+				Name:   "user",
+				Mixins: []moleculer.Mixin{eventStore.Mixin()},
+				Actions: []moleculer.Action{
+					{
+						Name:    "create",
+						Handler: eventStore.NewEvent("user.created", M{"tag": "valueX"}),
+					},
+				},
+			}
+			bkr := broker.New(&moleculer.Config{
+				LogLevel: logLevel,
+			})
+			bkr.Publish(service)
+			bkr.Start()
+			r := <-bkr.Call("user.create", map[string]string{
+				"userName": "johnTravolta",
+			})
+			Expect(r.Error()).Should(Succeed())
+			Expect(r.Get("created").Exists()).Should(BeTrue())
+			Expect(r.Get("event").String()).Should(Equal("user.created"))
+			Expect(r.Get("tag").String()).Should(Equal("valueX"))
+			Expect(r.Get("id").Int()).Should(Equal(1))
+			bkr.Stop()
+			close(done)
+		}, 4)
 
 	})
 
