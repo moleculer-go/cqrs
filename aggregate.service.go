@@ -56,10 +56,9 @@ func (a *aggregator) settings() map[string]interface{} {
 
 // createServiceSchema create the aggregate service schema.
 func (a *aggregator) createServiceSchema() {
-	name := a.name + "Aggregate"
-	adapter := a.createAdapter(name, a.fields(), a.settings())
+	adapter := a.createAdapter(a.name, a.fields(), a.settings())
 	a.serviceSchema = moleculer.ServiceSchema{
-		Name:   name,
+		Name:   a.name,
 		Mixins: []moleculer.Mixin{store.Mixin(adapter)},
 	}
 }
@@ -71,11 +70,11 @@ func (a *aggregator) Create(transform Transformer) moleculer.EventHandler {
 		eventId := event.Get("id").String()
 		record := transform(c, event)
 		if record.IsError() {
-			c.Logger().Error(a.name+"Aggregate.Create() Could not transform event - eventId: ", eventId, " - error: ", record.Error())
-			c.Emit(a.name+"Aggregate.created.error", record)
+			c.Logger().Error(a.name+".Create() Could not transform event - eventId: ", eventId, " - error: ", record.Error())
+			c.Emit(a.name+".created.error", record)
 			return
 		}
-		c.Call(a.name+"Aggregate.create", record.Add("eventId", eventId))
+		c.Call(a.name+".create", record.Add("eventId", eventId))
 	}
 }
 
@@ -88,10 +87,10 @@ func (a *aggregator) CreateMany(transform ManyTransformer) moleculer.EventHandle
 		for _, record := range records {
 			if record.IsError() {
 				c.Logger().Error("Aggregate.CreateMany() Could not transform event - eventId: ", eventId, " - error: ", record.Error())
-				c.Emit(a.name+"Aggregate.create.error", record)
+				c.Emit(a.name+".create.error", record)
 				continue
 			}
-			c.Call(a.name+"Aggregate.create", record.Add("eventId", eventId))
+			c.Call(a.name+".create", record.Add("eventId", eventId))
 		}
 	}
 }

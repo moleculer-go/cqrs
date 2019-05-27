@@ -17,7 +17,7 @@ import (
 )
 
 var _ = Describe("CQRS Pluggin", func() {
-	logLevel := "debug"
+	logLevel := "error"
 
 	adapterFactory := func(fields map[string]interface{}) AdapterFactory {
 		return func(name string, cqrsFields, settings map[string]interface{}) store.Adapter {
@@ -32,7 +32,7 @@ var _ = Describe("CQRS Pluggin", func() {
 	Describe("Event Store", func() {
 
 		createBroker := func(dispatchBatchSize int) *broker.ServiceBroker {
-			eventStore := EventStore("property", adapterFactory(map[string]interface{}{}))
+			eventStore := EventStore("propertyEventStore", adapterFactory(map[string]interface{}{}))
 			service := moleculer.ServiceSchema{
 				Name:   "property",
 				Mixins: []moleculer.Mixin{eventStore.Mixin()},
@@ -164,7 +164,7 @@ var _ = Describe("CQRS Pluggin", func() {
 		}, 4)
 
 		It("should store extra fields in the event", func(done Done) {
-			eventStore := EventStore("user", adapterFactory(map[string]interface{}{}), map[string]interface{}{
+			eventStore := EventStore("userEventStore", adapterFactory(map[string]interface{}{}), map[string]interface{}{
 				"tag": "string",
 			})
 			service := moleculer.ServiceSchema{
@@ -199,7 +199,7 @@ var _ = Describe("CQRS Pluggin", func() {
 	Describe("Aggregate", func() {
 
 		createBroker := func(dispatchBatchSize int) *broker.ServiceBroker {
-			eventStore := EventStore("property", adapterFactory(map[string]interface{}{}))
+			eventStore := EventStore("propertyEventStore", adapterFactory(map[string]interface{}{}))
 			service := moleculer.ServiceSchema{
 				Name:   "property",
 				Mixins: []moleculer.Mixin{eventStore.Mixin()},
@@ -217,7 +217,7 @@ var _ = Describe("CQRS Pluggin", func() {
 			return bkr
 		}
 
-		notifications := Aggregate("notifications", adapterFactory(map[string]interface{}{
+		notifications := Aggregate("notificationsAggregate", adapterFactory(map[string]interface{}{
 			"eventId":      "integer",
 			"smsContent":   "string",
 			"pushContent":  "string",
@@ -271,10 +271,14 @@ var _ = Describe("CQRS Pluggin", func() {
 			Expect(notification.Get("pushContent").String()).Should(Equal("Hi John, Property Beach villa with 12 was added to your account!"))
 			Expect(notification.Get("emailContent").String()).Should(Equal("..."))
 
-			//check if one record was created in the aggregate :)
-			notificationsCount = <-bkr.Call("notificationsAggregate.count", M{})
-			Expect(notificationsCount.Error()).Should(Succeed())
-			Expect(notificationsCount.Int()).Should(Equal(1))
+			//wait until one record was created in the aggregate :)
+			for {
+				notificationsCount = <-bkr.Call("notificationsAggregate.count", M{})
+				Expect(notificationsCount.Error()).Should(Succeed())
+				if notificationsCount.Int() == 1 {
+					break
+				}
+			}
 
 			bkr.Stop()
 			close(done)
@@ -333,7 +337,7 @@ var _ = Describe("CQRS Pluggin", func() {
 			Expect(notifications[0].Get("emailContent").String()).Should(Equal("..."))
 			Expect(notifications[3].Get("pushContent").String()).Should(Equal("[3] Hi John, Property Beach villa with 12 was added to your account!"))
 
-			//check if one record was created in the aggregate :)
+			//wait forone record to be created in the aggregate :)
 			for {
 				notificationsCount = <-bkr.Call("notificationsAggregate.count", M{})
 				Expect(notificationsCount.Error()).Should(Succeed())
@@ -341,7 +345,6 @@ var _ = Describe("CQRS Pluggin", func() {
 					break
 				}
 			}
-			Expect(notificationsCount.Int()).Should(Equal(5))
 
 			bkr.Stop()
 			close(done)

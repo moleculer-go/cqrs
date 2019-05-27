@@ -182,16 +182,15 @@ func (e *eventStore) settings() M {
 }
 
 func (e *eventStore) createEventStoreService() {
-	name := e.name + "EventStore"
 	fieldMap := e.fields()
-	e.eventStoreAdapter = e.createAdapter(name, fieldMap, e.settings())
+	e.eventStoreAdapter = e.createAdapter(e.name, fieldMap, e.settings())
 
 	fields := []string{}
 	for f := range fieldMap {
 		fields = append(fields, f)
 	}
 	e.eventStoreService = moleculer.ServiceSchema{
-		Name:   name,
+		Name:   e.name,
 		Mixins: []moleculer.Mixin{store.Mixin(e.eventStoreAdapter)},
 		Settings: M{
 			"fields": fields,
