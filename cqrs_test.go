@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/moleculer-go/moleculer/payload"
 	"github.com/moleculer-go/moleculer/serializer"
 	"github.com/moleculer-go/store"
 	"github.com/moleculer-go/store/sqlite"
@@ -16,6 +17,7 @@ import (
 
 var _ = Describe("CQRS Pluggin", func() {
 	logLevel := "debug"
+
 	adapterFactory := func(fields map[string]interface{}) AdapterFactory {
 		return func(name string, cqrsFields, settings map[string]interface{}) store.Adapter {
 			return &sqlite.Adapter{
@@ -162,8 +164,90 @@ var _ = Describe("CQRS Pluggin", func() {
 
 	})
 
-	It("should ...", func(done Done) {
-		close(done)
+	Describe("Aggregate", func() {
+
+		createBroker := func(dispatchBatchSize int) *broker.ServiceBroker {
+			eventStore := EventStore("property", adapterFactory(map[string]interface{}{}))
+			service := moleculer.ServiceSchema{
+				Name:   "property",
+				Mixins: []moleculer.Mixin{eventStore.Mixin()},
+				Actions: []moleculer.Action{
+					{
+						Name:    "create",
+						Handler: eventStore.NewEvent("property.created"),
+					},
+				},
+			}
+			bkr := broker.New(&moleculer.Config{
+				LogLevel: logLevel,
+			})
+			bkr.Publish(service)
+			return bkr
+		}
+
+		notifications := Aggregate("notifications", adapterFactory(map[string]interface{}{
+			"eventId":      "integer",
+			"smsContent":   "string",
+			"pushContent":  "string",
+			"emailContent": "string",
+		}))
+
+		It("should transform event and save one aggregate record", func(done Done) {
+			bkr := createBroker(1)
+			notificationCreated := make(chan moleculer.Payload, 1)
+			//transform the incoming property.created event into a property notification aggregate record.
+			transformPropertyCreated := func(context moleculer.Context, event moleculer.Payload) moleculer.Payload {
+				fmt.Println("Event called -> property.created ! event: ", event)
+				property := event.Get("payload")
+				name := "John"
+				mobileMsg := "Hi " + name + ", Property " + property.Get("name").String() + " with " + property.Get("bedrooms").String() + " was added to your account!"
+				notification := payload.New(M{
+					"eventId":      event.Get("id").Int(),
+					"smsContent":   mobileMsg,
+					"pushContent":  mobileMsg,
+					"emailContent": "...",
+				})
+				notificationCreated <- notification
+				return notification
+			}
+			bkr.Publish(moleculer.ServiceSchema{
+				Name:   "propertyNotifier",
+				Mixins: []moleculer.Mixin{notifications.Mixin()},
+				Events: []moleculer.Event{
+					{
+						Name:    "property.created",
+						Handler: notifications.Create(transformPropertyCreated),
+					},
+				},
+			})
+			bkr.Start()
+
+			//aggregate starts empty
+			notificationsCount := <-bkr.Call("notificationsAggregate.count", M{})
+			Expect(notificationsCount.Error()).Should(Succeed())
+			Expect(notificationsCount.Int()).Should(Equal(0))
+
+			evt := <-bkr.Call("property.create", map[string]string{
+				"listingId": "100000",
+				"name":      "Beach villa",
+				"bedrooms":  "12",
+			})
+			Expect(evt.Error()).Should(Succeed())
+			notification := <-notificationCreated
+			Expect(notification.Get("eventId").Int()).Should(Equal(evt.Get("id").Int()))
+			Expect(notification.Get("smsContent").String()).Should(Equal("Hi John, Property Beach villa with 12 was added to your account!"))
+			Expect(notification.Get("pushContent").String()).Should(Equal("Hi John, Property Beach villa with 12 was added to your account!"))
+			Expect(notification.Get("emailContent").String()).Should(Equal("..."))
+
+			//check if one record was created in the aggregate :)
+			notificationsCount = <-bkr.Call("notificationsAggregate.count", M{})
+			Expect(notificationsCount.Error()).Should(Succeed())
+			Expect(notificationsCount.Int()).Should(Equal(1))
+
+			bkr.Stop()
+			close(done)
+		}, 3)
+
 	})
 
 })

@@ -31,13 +31,16 @@ func (a *aggregator) Mixin() moleculer.Mixin {
 
 // parentServiceStarted parent service started.
 func (a *aggregator) parentServiceStarted(c moleculer.BrokerContext, svc moleculer.ServiceSchema) {
+	c.Logger().Debug("parentServiceStarted... ")
 	a.brokerContext = c
 	a.parentService = svc
 	a.logger = c.Logger().WithField("aggregate", a.name)
 
 	a.createServiceSchema()
+	c.Logger().Debug("parentServiceStarted before publishing service: ", a.serviceSchema.Name)
 	c.Publish(a.serviceSchema)
 	c.WaitFor(a.serviceSchema.Name)
+	c.Logger().Debug("parentServiceStarted service published! service: ", a.serviceSchema.Name)
 }
 
 func (a *aggregator) settings() map[string]interface{} {
@@ -53,14 +56,11 @@ func (a *aggregator) settings() map[string]interface{} {
 
 // createServiceSchema create the aggregate service schema.
 func (a *aggregator) createServiceSchema() {
-	//TODO add the field eventId
-	adapter := a.createAdapter(a.name+"Aggregate", a.fields(), a.settings())
+	name := a.name + "Aggregate"
+	adapter := a.createAdapter(name, a.fields(), a.settings())
 	a.serviceSchema = moleculer.ServiceSchema{
-		Name:   a.name,
+		Name:   name,
 		Mixins: []moleculer.Mixin{store.Mixin(adapter)},
-		Started: func(c moleculer.BrokerContext, svc moleculer.ServiceSchema) {
-
-		},
 	}
 }
 
@@ -68,28 +68,21 @@ func (a *aggregator) createServiceSchema() {
 // The event handler will create an aggregate record in the aggregate store.
 func (a *aggregator) Create(transform Transformer) moleculer.EventHandler {
 	return func(c moleculer.Context, event moleculer.Payload) {
-		eventID := event.Get("id").String()
+		eventId := event.Get("id").String()
 		record := transform(c, event)
 		if record.IsError() {
-			c.Logger().Error("EventStore.Create() Could not transform event - eventID: ", eventID, " - error: ", record.Error())
+			c.Logger().Error("EventStore.Create() Could not transform event - eventId: ", eventId, " - error: ", record.Error())
 			c.Emit("property.created.error", record)
 			return
 		}
-		record = a.create(c, record.Add("eventID", eventID))
+		record = <-c.Call(a.name+"Aggregate.create", record.Add("eventId", eventId))
 		c.Emit("property.created.successfully", record)
 	}
-}
-
-//create create a new aggregate record.
-// it has already being validated and transformed.
-func (a *aggregator) create(c moleculer.Context, r moleculer.Payload) moleculer.Payload {
-	//TODO save record to the model
-	return r
 }
 
 // fields return a map with fields that this event store needs in the adapter
 func (a *aggregator) fields() map[string]interface{} {
 	return map[string]interface{}{
-		"eventID": "integer",
+		"eventId": "integer",
 	}
 }

@@ -27,7 +27,7 @@ func adapterFactory(fields map[string]interface{}) cqrs.AdapterFactory {
 	}
 }
 
-var property = cqrs.Aggregate("property", adapterFactory(map[string]interface{}{
+var properties = cqrs.Aggregate("property", adapterFactory(map[string]interface{}{
 	"name": "string",
 	//"headline":"string", or title ?
 	"title":       "string",
@@ -59,7 +59,7 @@ var events = cqrs.EventStore("property", adapterFactory(map[string]interface{}{}
 
 var service = moleculer.ServiceSchema{
 	Name:   "property",
-	Mixins: []moleculer.Mixin{events.Mixin(), property.Mixin()},
+	Mixins: []moleculer.Mixin{events.Mixin(), properties.Mixin()},
 	Actions: []moleculer.Action{
 		{
 			Name:    "create",
@@ -70,7 +70,7 @@ var service = moleculer.ServiceSchema{
 		{
 			//property.created is fired by the persistent event store.
 			Name:    "property.created",
-			Handler: propertyAggregate.Create(transformProperty),
+			Handler: properties.Create(transformProperty),
 		},
 	},
 }
@@ -82,4 +82,5 @@ func transformProperty(context moleculer.Context, event moleculer.Payload) molec
 	//save record on aggregate
 
 	//context.Emit("property.created.successfully", property)
+	return nil
 }
