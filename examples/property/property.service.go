@@ -68,9 +68,7 @@ var service = moleculer.ServiceSchema{
 	},
 	Events: []moleculer.Event{
 		{
-			//event fired by the CQRS mixin
-			//it keeps checking for new events and when there
-			//are any, it emits this event.
+			//property.created is fired by the persistent event store.
 			Name:    "property.created",
 			Handler: propertyAggregate.Create(transformProperty),
 		},
