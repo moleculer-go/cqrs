@@ -34,5 +34,4 @@ func fetchListings(context moleculer.Context, params moleculer.Payload) interfac
 // call property.updated
 func listingReceived(context moleculer.Context, params moleculer.Payload) {
 
-	return nil
 }

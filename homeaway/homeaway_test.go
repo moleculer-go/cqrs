@@ -9,15 +9,15 @@ var _ = Describe("Homeaway", func() {
 
 	It("should create a property", func() {
 
-		svc := service
-		svc.Settings["cqrs"] = map[string]string{
-			"sqliteFolder": "memory",
-			"extraFields":  "source",
-		}
+		// svc := service
+		// svc.Settings["cqrs"] = map[string]string{
+		// 	"sqliteFolder": "memory",
+		// 	"extraFields":  "source",
+		// }
 
-		svc.Settings["cqrs"] = map[string]string{
-			"sqliteFolder": "~/db/",
-		}
+		// svc.Settings["cqrs"] = map[string]string{
+		// 	"sqliteFolder": "~/db/",
+		// }
 
 	})
 

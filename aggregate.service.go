@@ -41,7 +41,7 @@ func (a *aggregator) parentServiceStarted(c moleculer.BrokerContext, svc molecul
 }
 
 func (a *aggregator) settings() map[string]interface{} {
-	setts, ok := a.parentService.Settings["cqrs"]
+	setts, ok := a.parentService.Settings["aggregate"]
 	if ok {
 		sm, ok := setts.(map[string]interface{})
 		if ok {
