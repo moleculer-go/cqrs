@@ -8,6 +8,7 @@ import (
 type AdapterFactory func(name string, fields, settings map[string]interface{}) store.Adapter
 
 type Transformer func(context moleculer.Context, params moleculer.Payload) moleculer.Payload
+type ManyTransformer func(context moleculer.Context, params moleculer.Payload) []moleculer.Payload
 
 type EventStorer interface {
 	Mixin() moleculer.Mixin
@@ -21,9 +22,9 @@ type Aggregator interface {
 	// property.created.successfully at the end of the process or
 	// property.created.error when there is an issue/error transformring the event
 	Create(Transformer) moleculer.EventHandler
+	CreateMany(ManyTransformer) moleculer.EventHandler
 
 	//ideas
-	//CreateMany
 	//UpdateMany
 	//Update
 	//Remove

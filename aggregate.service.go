@@ -64,19 +64,35 @@ func (a *aggregator) createServiceSchema() {
 	}
 }
 
-// Create received an transformer and returns a EventHandler.
+// Create receives an transformer and returns a EventHandler.
 // The event handler will create an aggregate record in the aggregate store.
 func (a *aggregator) Create(transform Transformer) moleculer.EventHandler {
 	return func(c moleculer.Context, event moleculer.Payload) {
 		eventId := event.Get("id").String()
 		record := transform(c, event)
 		if record.IsError() {
-			c.Logger().Error("EventStore.Create() Could not transform event - eventId: ", eventId, " - error: ", record.Error())
-			c.Emit("property.created.error", record)
+			c.Logger().Error(a.name+"Aggregate.Create() Could not transform event - eventId: ", eventId, " - error: ", record.Error())
+			c.Emit(a.name+"Aggregate.created.error", record)
 			return
 		}
-		record = <-c.Call(a.name+"Aggregate.create", record.Add("eventId", eventId))
-		c.Emit("property.created.successfully", record)
+		c.Call(a.name+"Aggregate.create", record.Add("eventId", eventId))
+	}
+}
+
+// CreateMany receives an transformer and returns a EventHandler.
+// The event handler will create multiple  aggregate records in the aggregate store.
+func (a *aggregator) CreateMany(transform ManyTransformer) moleculer.EventHandler {
+	return func(c moleculer.Context, event moleculer.Payload) {
+		eventId := event.Get("id").String()
+		records := transform(c, event)
+		for _, record := range records {
+			if record.IsError() {
+				c.Logger().Error("Aggregate.CreateMany() Could not transform event - eventId: ", eventId, " - error: ", record.Error())
+				c.Emit(a.name+"Aggregate.create.error", record)
+				continue
+			}
+			c.Call(a.name+"Aggregate.create", record.Add("eventId", eventId))
+		}
 	}
 }
 

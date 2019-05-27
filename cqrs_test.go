@@ -2,6 +2,7 @@ package cqrs
 
 import (
 	"fmt"
+	"strconv"
 	"time"
 
 	"github.com/moleculer-go/moleculer/payload"
@@ -123,7 +124,7 @@ var _ = Describe("CQRS Pluggin", func() {
 			<-bkr.Call("property.$stopDispatch", nil)
 			for index := 0; index < dispatchBatchSize; index++ {
 				r := <-bkr.Call("property.create", map[string]string{
-					"listingId":    "some_id_" + string(index),
+					"listingId":    "some_id_" + strconv.Itoa(index),
 					"externalId":   "123-abc",
 					"status":       "ENABLED",
 					"propertyName": "Clarksville Cottage",
@@ -192,7 +193,7 @@ var _ = Describe("CQRS Pluggin", func() {
 			"emailContent": "string",
 		}))
 
-		It("should transform event and save one aggregate record", func(done Done) {
+		It("should transform one event and save one aggregate record", func(done Done) {
 			bkr := createBroker(1)
 			notificationCreated := make(chan moleculer.Payload, 1)
 			//transform the incoming property.created event into a property notification aggregate record.
@@ -243,6 +244,73 @@ var _ = Describe("CQRS Pluggin", func() {
 			notificationsCount = <-bkr.Call("notificationsAggregate.count", M{})
 			Expect(notificationsCount.Error()).Should(Succeed())
 			Expect(notificationsCount.Int()).Should(Equal(1))
+
+			bkr.Stop()
+			close(done)
+		}, 3)
+
+		It("should transform one event and save 5 aggregate records", func(done Done) {
+			bkr := createBroker(1)
+			notificationsCreated := make(chan []moleculer.Payload, 1)
+			//transform the incoming property.created event into 5 property
+			//notification aggregate records
+			createNotifications := func(context moleculer.Context, event moleculer.Payload) []moleculer.Payload {
+				fmt.Println("Event called -> property.created ! event: ", event)
+				property := event.Get("payload")
+				name := "John"
+				mobileMsg := "Hi " + name + ", Property " + property.Get("name").String() + " with " + property.Get("bedrooms").String() + " was added to your account!"
+				notifications := []moleculer.Payload{}
+				for index := 0; index < 5; index++ {
+					notification := payload.New(M{
+						"eventId":      event.Get("id").Int(),
+						"smsContent":   "[" + strconv.Itoa(index) + "] " + mobileMsg,
+						"pushContent":  "[" + strconv.Itoa(index) + "] " + mobileMsg,
+						"emailContent": "...",
+					})
+					notifications = append(notifications, notification)
+				}
+				notificationsCreated <- notifications
+				return notifications
+			}
+			bkr.Publish(moleculer.ServiceSchema{
+				Name:   "propertyNotifier",
+				Mixins: []moleculer.Mixin{notifications.Mixin()},
+				Events: []moleculer.Event{
+					{
+						Name:    "property.created",
+						Handler: notifications.CreateMany(createNotifications),
+					},
+				},
+			})
+			bkr.Start()
+
+			//aggregate starts empty
+			notificationsCount := <-bkr.Call("notificationsAggregate.count", M{})
+			Expect(notificationsCount.Error()).Should(Succeed())
+			Expect(notificationsCount.Int()).Should(Equal(0))
+
+			evt := <-bkr.Call("property.create", map[string]string{
+				"listingId": "100000",
+				"name":      "Beach villa",
+				"bedrooms":  "12",
+			})
+			Expect(evt.Error()).Should(Succeed())
+			notifications := <-notificationsCreated
+			Expect(notifications[0].Get("eventId").Int()).Should(Equal(evt.Get("id").Int()))
+			Expect(notifications[0].Get("smsContent").String()).Should(Equal("[0] Hi John, Property Beach villa with 12 was added to your account!"))
+			Expect(notifications[0].Get("pushContent").String()).Should(Equal("[0] Hi John, Property Beach villa with 12 was added to your account!"))
+			Expect(notifications[0].Get("emailContent").String()).Should(Equal("..."))
+			Expect(notifications[3].Get("pushContent").String()).Should(Equal("[3] Hi John, Property Beach villa with 12 was added to your account!"))
+
+			//check if one record was created in the aggregate :)
+			for {
+				notificationsCount = <-bkr.Call("notificationsAggregate.count", M{})
+				Expect(notificationsCount.Error()).Should(Succeed())
+				if notificationsCount.Int() == 5 {
+					break
+				}
+			}
+			Expect(notificationsCount.Int()).Should(Equal(5))
 
 			bkr.Stop()
 			close(done)
