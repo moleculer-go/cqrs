@@ -31,16 +31,16 @@ func (a *aggregator) Mixin() moleculer.Mixin {
 
 // parentServiceStarted parent service started.
 func (a *aggregator) parentServiceStarted(c moleculer.BrokerContext, svc moleculer.ServiceSchema) {
-	c.Logger().Debug("parentServiceStarted... ")
+	c.Logger().Debug("parentServiceStarted()... ")
 	a.brokerContext = c
 	a.parentService = svc
 	a.logger = c.Logger().WithField("aggregate", a.name)
 
 	a.createServiceSchema()
-	c.Logger().Debug("parentServiceStarted before publishing service: ", a.serviceSchema.Name)
+	c.Logger().Debug("parentServiceStarted() before publishing service: ", a.serviceSchema.Name)
 	c.Publish(a.serviceSchema)
 	c.WaitFor(a.serviceSchema.Name)
-	c.Logger().Debug("parentServiceStarted service published! service: ", a.serviceSchema.Name)
+	c.Logger().Debug("parentServiceStarted() service: ", a.serviceSchema.Name, " was published!")
 }
 
 func (a *aggregator) settings() map[string]interface{} {

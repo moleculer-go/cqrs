@@ -1,7 +1,6 @@
 package cqrs
 
 import (
-	"fmt"
 	"strconv"
 	"time"
 
@@ -94,7 +93,6 @@ var _ = Describe("CQRS Pluggin", func() {
 					{
 						Name: "property.created",
 						Handler: func(c moleculer.Context, p moleculer.Payload) {
-							fmt.Println("Event called -> property.created !")
 							propertyCreated <- p
 						},
 					},
@@ -139,13 +137,10 @@ var _ = Describe("CQRS Pluggin", func() {
 			list := make([]moleculer.Payload, dispatchBatchSize)
 			for index := 0; index < dispatchBatchSize; index++ {
 				evt := <-propertyCreated
-				fmt.Println("Event received - (index: ", index, ") event: ", evt)
-
 				Expect(evt.Error()).Should(Succeed())
 				Expect(evt.Get("event").String()).Should(Equal("property.created"))
 				list[index] = evt
 			}
-			fmt.Println("All events received!")
 			Expect(list[0].Get("batchSize").Int()).Should(Equal(dispatchBatchSize))
 			Expect(list[0].Get("payload").Get("externalId").String()).Should(Equal("123-abc"))
 			Expect(list[0].Get("payload").Get("status").String()).Should(Equal("ENABLED"))
@@ -229,7 +224,6 @@ var _ = Describe("CQRS Pluggin", func() {
 			notificationCreated := make(chan moleculer.Payload, 1)
 			//transform the incoming property.created event into a property notification aggregate record.
 			transformPropertyCreated := func(context moleculer.Context, event moleculer.Payload) moleculer.Payload {
-				fmt.Println("Event called -> property.created ! event: ", event)
 				property := event.Get("payload")
 				name := "John"
 				mobileMsg := "Hi " + name + ", Property " + property.Get("name").String() + " with " + property.Get("bedrooms").String() + " was added to your account!"
@@ -290,7 +284,6 @@ var _ = Describe("CQRS Pluggin", func() {
 			//transform the incoming property.created event into 5 property
 			//notification aggregate records
 			createNotifications := func(context moleculer.Context, event moleculer.Payload) []moleculer.Payload {
-				fmt.Println("Event called -> property.created ! event: ", event)
 				property := event.Get("payload")
 				name := "John"
 				mobileMsg := "Hi " + name + ", Property " + property.Get("name").String() + " with " + property.Get("bedrooms").String() + " was added to your account!"

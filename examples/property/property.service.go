@@ -1,6 +1,8 @@
 package property
 
 import (
+	"fmt"
+
 	"github.com/moleculer-go/cqrs"
 	"github.com/moleculer-go/moleculer"
 	"github.com/moleculer-go/store"
@@ -17,19 +19,18 @@ func resolveSQLiteURI(settings map[string]interface{}) string {
 }
 
 // adapterFactory used by the CQRS mixin to create adapter for its models.
-func adapterFactory(fields map[string]interface{}) cqrs.AdapterFactory {
+func adapterFactory(fields ...map[string]interface{}) cqrs.AdapterFactory {
 	return func(name string, cqrsFields, settings map[string]interface{}) store.Adapter {
 		return &sqlite.Adapter{
 			URI:     resolveSQLiteURI(settings),
 			Table:   name,
-			Columns: cqrs.FieldsToSQLiteColumns(fields, cqrsFields),
+			Columns: cqrs.FieldsToSQLiteColumns(append(fields, cqrsFields)...),
 		}
 	}
 }
 
-var properties = cqrs.Aggregate("property", adapterFactory(map[string]interface{}{
-	"name": "string",
-	//"headline":"string", or title ?
+var propertiesAg = cqrs.Aggregate("propertyAggregate", adapterFactory(map[string]interface{}{
+	"name":        "string",
 	"title":       "string",
 	"description": "string",
 	"active":      "bool",
@@ -55,11 +56,11 @@ var properties = cqrs.Aggregate("property", adapterFactory(map[string]interface{
 	},
 }))
 
-var events = cqrs.EventStore("property", adapterFactory(map[string]interface{}{}))
+var events = cqrs.EventStore("propertyEventStore", adapterFactory())
 
-var service = moleculer.ServiceSchema{
+var Service = moleculer.ServiceSchema{
 	Name:   "property",
-	Mixins: []moleculer.Mixin{events.Mixin(), properties.Mixin()},
+	Mixins: []moleculer.Mixin{events.Mixin(), propertiesAg.Mixin()},
 	Actions: []moleculer.Action{
 		{
 			Name:    "create",
@@ -70,7 +71,7 @@ var service = moleculer.ServiceSchema{
 		{
 			//property.created is fired by the persistent event store.
 			Name:    "property.created",
-			Handler: properties.Create(transformProperty),
+			Handler: propertiesAg.Create(transformProperty),
 		},
 	},
 }
@@ -78,9 +79,7 @@ var service = moleculer.ServiceSchema{
 // transformProperty transform the property created event
 // into then payload to be saved into the aggregate
 func transformProperty(context moleculer.Context, event moleculer.Payload) moleculer.Payload {
-
-	//save record on aggregate
-
-	//context.Emit("property.created.successfully", property)
-	return nil
+	property := event.Get("payload")
+	fmt.Println("transformProperty() property: ", property)
+	return property
 }

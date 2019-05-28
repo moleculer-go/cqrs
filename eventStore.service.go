@@ -1,7 +1,6 @@
 package cqrs
 
 import (
-	"fmt"
 	"time"
 
 	"github.com/moleculer-go/moleculer"
@@ -92,7 +91,6 @@ type M map[string]interface{}
 // blocks until there is a event available.
 // also checks for retry events.
 func (e *eventStore) fetchNextEvents(limit int) moleculer.Payload {
-	fmt.Println("fetchNextEvents limit: ", limit)
 	for {
 		if e.stopping {
 			return payload.EmptyList()
@@ -175,7 +173,6 @@ func (e *eventStore) settings() M {
 	setts, ok := e.parentService.Settings["eventStore"]
 	if ok {
 		s := payload.New(setts).RawMap()
-		fmt.Println("settings: ", s)
 		return s
 	}
 	return M{}

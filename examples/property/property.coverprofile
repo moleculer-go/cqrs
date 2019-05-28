@@ -1,0 +1,7 @@
+mode: atomic
+github.com/moleculer-go/cqrs/examples/property/property.service.go:13.63,15.40 2 2
+github.com/moleculer-go/cqrs/examples/property/property.service.go:18.2,18.36 1 0
+github.com/moleculer-go/cqrs/examples/property/property.service.go:15.40,17.3 1 2
+github.com/moleculer-go/cqrs/examples/property/property.service.go:22.75,23.86 1 2
+github.com/moleculer-go/cqrs/examples/property/property.service.go:23.86,29.3 1 2
+github.com/moleculer-go/cqrs/examples/property/property.service.go:81.94,85.2 3 1
