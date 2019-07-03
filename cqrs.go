@@ -23,9 +23,12 @@ type Aggregator interface {
 	// property.created.error when there is an issue/error transformring the event
 	Create(Transformer) moleculer.EventHandler
 	CreateMany(ManyTransformer) moleculer.EventHandler
+	// Update changes an existing aggregate record
+	// if the result of the transformation has an id,
+	// or creates a new aggreagate record if no id is present.
+	Update(Transformer) moleculer.EventHandler
 
 	//ideas
 	//UpdateMany
-	//Update
 	//Remove
 }

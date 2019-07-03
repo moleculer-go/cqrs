@@ -78,7 +78,7 @@ func (a *aggregator) Create(transform Transformer) moleculer.EventHandler {
 	}
 }
 
-// CreateMany receives an transformer and returns a EventHandler.
+// CreateMany receives an transformer and returns an EventHandler.
 // The event handler will create multiple  aggregate records in the aggregate store.
 func (a *aggregator) CreateMany(transform ManyTransformer) moleculer.EventHandler {
 	return func(c moleculer.Context, event moleculer.Payload) {
@@ -90,6 +90,25 @@ func (a *aggregator) CreateMany(transform ManyTransformer) moleculer.EventHandle
 				c.Emit(a.name+".create.error", record)
 				continue
 			}
+			c.Call(a.name+".create", record.Add("eventId", eventId))
+		}
+	}
+}
+
+// Update receives an transformer and returns an EventHandler.
+// The event handler will update an existing aggregate record in the aggregate store.
+func (a *aggregator) Update(transform Transformer) moleculer.EventHandler {
+	return func(c moleculer.Context, event moleculer.Payload) {
+		eventId := event.Get("id").String()
+		record := transform(c, event)
+		if record.IsError() {
+			c.Logger().Error(a.name+".Update() Could not transform event - eventId: ", eventId, " - error: ", record.Error())
+			c.Emit(a.name+".updated.error", record)
+			return
+		}
+		if record.Get("id").Exists() {
+			c.Call(a.name+".update", record.Add("eventId", eventId))
+		} else {
 			c.Call(a.name+".create", record.Add("eventId", eventId))
 		}
 	}
