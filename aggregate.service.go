@@ -19,6 +19,9 @@ type aggregator struct {
 	logger        *log.Entry
 	brokerContext moleculer.BrokerContext
 	parentService moleculer.ServiceSchema
+
+	snapshotStore EventStorer
+	snapshotSetup SnapshotSetup
 }
 
 // Mixin return the mixin schema for CQRS plugin
@@ -60,6 +63,12 @@ func (a *aggregator) createServiceSchema() {
 	a.serviceSchema = moleculer.ServiceSchema{
 		Name:   a.name,
 		Mixins: []moleculer.Mixin{store.Mixin(adapter)},
+		Actions: []moleculer.Action{
+			{
+				Name:    "snapshot",
+				Handler: a.snapshotAction,
+			},
+		},
 	}
 }
 
@@ -119,4 +128,38 @@ func (a *aggregator) fields() map[string]interface{} {
 	return map[string]interface{}{
 		"eventId": "integer",
 	}
+}
+
+//Snapshot setup the snashot options for this aggregate.
+func (a *aggregator) Snapshot(eventStore EventStorer, snapshotSetup SnapshotSetup) Aggregator {
+	a.snapshotStore = eventStore
+	a.snapshotSetup = snapshotSetup
+	return a
+}
+
+//Proposal
+// - pause event pumps -> pause aggregate changes :)
+//  - create a snapshot event -> new events will pile up after this point! = Write is enabled.
+//  - ** no changes are happening on aggregates ** but reads continue happily.
+//  - backup aggregates -> aggregate.backup(snapshotName)  (SQLLite -> basicaly copy files :) )
+//  - restart the event pump :)
+//  - done.
+//  - Error scenarios:
+//  - if backup fails the event is marked as failed and is ignored when trying to restore events.
+//  - Rationale:
+//  ---> Since you created an event about the start of the snapshot at the same moment you paused the pump. this event should point to the backup file. so it can be used when restoring the snapshot.
+
+//snapshotAction - snapshot the aggregate
+func (a *aggregator) snapshotAction(context moleculer.Context, params moleculer.Payload) interface{} {
+	//snapshot the aggregate
+	snapshotName := "xyz"
+	aggregateMetadata := map[string]interface{}{}
+
+	err := a.snapshotStore.StartSnapshot(snapshotName, aggregateMetadata)
+	if err != nil {
+		// error creating the snapshot event
+
+	}
+
+	return snapshotName
 }

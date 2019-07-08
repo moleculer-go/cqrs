@@ -12,7 +12,11 @@ type ManyTransformer func(context moleculer.Context, params moleculer.Payload) [
 
 type EventStorer interface {
 	Mixin() moleculer.Mixin
-	NewEvent(eventName string, extraParams ...map[string]interface{}) moleculer.ActionHandler
+	PersistEvent(eventName string, extraParams ...map[string]interface{}) moleculer.ActionHandler
+}
+
+type SnapshotSetup interface {
+	Backup()
 }
 
 type Aggregator interface {
@@ -27,6 +31,9 @@ type Aggregator interface {
 	// if the result of the transformation has an id,
 	// or creates a new aggreagate record if no id is present.
 	Update(Transformer) moleculer.EventHandler
+
+	// Snapshot configure the snapshot behaviour of the aggregate
+	Snapshot(EventStorer, SnapshotSetup) Aggregator
 
 	//ideas
 	//UpdateMany

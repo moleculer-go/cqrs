@@ -11,6 +11,11 @@ import (
 )
 
 const (
+	TypeCommand  = 0
+	TypeSnapshot = 1
+)
+
+const (
 	StatusCreated    = 0
 	StatusProcessing = 1
 	StatusComplete   = 2
@@ -41,6 +46,8 @@ type eventStore struct {
 	stopping          bool
 	dispatchBatchSize int
 	poolingInterval   time.Duration
+
+	dispatchEventsStopped bool
 }
 
 // Mixin return the mixin schema for the eventStore plugin
@@ -96,7 +103,7 @@ func (e *eventStore) fetchNextEvents(limit int) moleculer.Payload {
 			return payload.EmptyList()
 		}
 		events := e.eventStoreAdapter.FindAndUpdate(payload.New(M{
-			"query": M{"status": StatusCreated},
+			"query": M{"status": StatusCreated, "eventType": TypeCommand},
 			"sort":  "created",
 			"limit": limit,
 			"update": M{
@@ -122,8 +129,10 @@ func (e *eventStore) prepareEventForEmit(event moleculer.Payload) moleculer.Payl
 
 //dispatchEvents read events from the store and dispatch events.
 func (e *eventStore) dispatchEvents() {
+	e.dispatchEventsStopped = false
 	for {
 		if e.stopping {
+			e.dispatchEventsStopped = true
 			return
 		}
 		batch := e.fetchNextEvents(e.dispatchBatchSize)
@@ -137,6 +146,7 @@ func (e *eventStore) dispatchEvents() {
 				"updated": updated,
 			}))
 			if e.stopping {
+				e.dispatchEventsStopped = true
 				return
 			}
 		}
@@ -197,16 +207,17 @@ func (e *eventStore) createEventStoreService() {
 	}
 }
 
-// NewEvent receives eventName and extraParams and returns an action handler
+// PersistEvent receives eventName and extraParams and returns an action handler
 // that saves the payload as an event record inside the event store.
 // extraParams are label=value to be saved in the event record.
 // if it fails to save the event to the store it emits the event eventName.failed
-func (e *eventStore) NewEvent(eventName string, extraParams ...map[string]interface{}) moleculer.ActionHandler {
+func (e *eventStore) PersistEvent(eventName string, extraParams ...map[string]interface{}) moleculer.ActionHandler {
 	return func(c moleculer.Context, p moleculer.Payload) interface{} {
 		event := M{
-			"event":   eventName,
-			"created": time.Now().Unix(),
-			"status":  StatusCreated,
+			"event":     eventName,
+			"created":   time.Now().Unix(),
+			"status":    StatusCreated,
+			"eventType": TypeCommand,
 		}
 		//merge event with params
 		extra := e.parseExtraParams(extraParams)
@@ -228,6 +239,56 @@ func (e *eventStore) NewEvent(eventName string, extraParams ...map[string]interf
 		}
 		return r
 	}
+}
+
+func (e *eventStore) stopPump() {
+	e.stopping = true
+	for {
+		if e.dispatchEventsStopped {
+			break
+		}
+	}
+}
+
+// StartSnapshot starts a snapshot, pause event pump and create an event
+// that represents the start of the snapshot fo events after this point
+// can be processed when snapshot is completed.
+func (e *eventStore) StartSnapshot(snapshotName string, aggregateMetadata map[string]interface{}) error {
+	e.logger.Debug("StartSnapshot snapshotName: ", snapshotName)
+	//pause event pumps -> pause aggregate changes :)
+	e.stopPump()
+
+	err := e.snapshotEvent(snapshotName, aggregateMetadata)
+
+	e.stopping = false
+	e.logger.Debug("restarting event pump!")
+	go e.dispatchEvents()
+
+	return err
+}
+
+// snapshotEvent create an snapshot event in the event store and stores the aggregate metadata as payload.
+func (e *eventStore) snapshotEvent(snapshotName string, aggregateMetadata map[string]interface{}) error {
+	event := M{
+		"event":     "snapshot_" + snapshotName,
+		"created":   time.Now().Unix(),
+		"status":    StatusComplete,
+		"eventType": TypeSnapshot,
+	}
+	event["payload"] = e.serializer.PayloadToBytes(payload.New(aggregateMetadata))
+
+	//save to the event store
+	r := <-e.brokerContext.Call(e.eventStoreService.Name+".create", event)
+	if r.IsError() {
+		return r.Error()
+	}
+	return r
+}
+
+// CompleteSnapshot complete a snapshot by resuming the event pump and
+// recording an event to represent this.
+func (e *eventStore) CompleteSnapshot(snapshotName string) {
+
 }
 
 // parseExtraParams extract valid extra parameters
@@ -264,6 +325,7 @@ func (e *eventStore) fields() M {
 		"created":    "integer",
 		"updated":    "integer",
 		"status":     "integer",
+		"eventType":  "integer",
 		"payload":    "[]byte",
 		"aggregates": "[]string",
 	}

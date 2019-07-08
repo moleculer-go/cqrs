@@ -19,7 +19,7 @@ func resolveSQLiteURI(settings map[string]interface{}) string {
 	return "file://" + folder.(string)
 }
 
-// adapterFactory used by the CQRS mixin to create adapter for its models.
+// adapterFactory used by the CQRS mixin to create the data store adapter for its models.
 func adapterFactory(fields ...map[string]interface{}) cqrs.AdapterFactory {
 	return func(name string, cqrsFields, settings map[string]interface{}) store.Adapter {
 		return &sqlite.Adapter{
@@ -30,12 +30,14 @@ func adapterFactory(fields ...map[string]interface{}) cqrs.AdapterFactory {
 	}
 }
 
+var events = cqrs.EventStore("propertyEventStore", adapterFactory())
+
 var propertySummaryAg = cqrs.Aggregate("propertySummaryAggregate", adapterFactory(map[string]interface{}{
 	"countryCode": "string",
 	"total":       "integer",
 	"beachCity":   "integer",
 	"mountain":    "integer",
-}))
+})).Snapshot(events, cqrs.SQLiteFileCopyBackup)
 
 var propertiesAg = cqrs.Aggregate("propertyAggregate", adapterFactory(map[string]interface{}{
 	"name":        "string",
@@ -64,15 +66,13 @@ var propertiesAg = cqrs.Aggregate("propertyAggregate", adapterFactory(map[string
 	},
 }))
 
-var events = cqrs.EventStore("propertyEventStore", adapterFactory())
-
 var Service = moleculer.ServiceSchema{
 	Name:   "property",
 	Mixins: []moleculer.Mixin{events.Mixin(), propertiesAg.Mixin(), propertySummaryAg.Mixin()},
 	Actions: []moleculer.Action{
 		{
-			Name:    "created",
-			Handler: events.NewEvent("property.created"),
+			Name:    "create",
+			Handler: events.PersistEvent("property.created"),
 		},
 	},
 	Events: []moleculer.Event{

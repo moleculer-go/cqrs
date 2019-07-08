@@ -44,7 +44,7 @@ var _ = Describe("CQRS Pluggin", func() {
 				Actions: []moleculer.Action{
 					{
 						Name:    "create",
-						Handler: eventStore.NewEvent("property.created"),
+						Handler: eventStore.PersistEvent("property.created"),
 					},
 				},
 			}
@@ -168,7 +168,7 @@ var _ = Describe("CQRS Pluggin", func() {
 				Actions: []moleculer.Action{
 					{
 						Name:    "create",
-						Handler: eventStore.NewEvent("user.created", M{"tag": "valueX"}),
+						Handler: eventStore.PersistEvent("user.created", M{"tag": "valueX"}),
 					},
 				},
 			}
@@ -201,7 +201,7 @@ var _ = Describe("CQRS Pluggin", func() {
 				Actions: []moleculer.Action{
 					{
 						Name:    "create",
-						Handler: eventStore.NewEvent("property.created"),
+						Handler: eventStore.PersistEvent("property.created"),
 					},
 				},
 			}
