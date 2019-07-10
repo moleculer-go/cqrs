@@ -2,6 +2,7 @@ package property
 
 import (
 	"fmt"
+	"strconv"
 
 	"github.com/moleculer-go/moleculer"
 	"github.com/moleculer-go/moleculer/broker"
@@ -19,10 +20,10 @@ var _ = Describe("Property service", func() {
 		for index := 1; index <= size; index++ {
 			city := "Wanaka"
 			if index%2 == 0 {
-				city := "Queenstown"
+				city = "Queenstown"
 			}
 			<-bkr.Call("property.create", M{
-				"name":        "Beach Villa Number " + index,
+				"name":        "Beach Villa Number " + strconv.Itoa(index),
 				"active":      true,
 				"bathrooms":   1.5,
 				"city":        city,
@@ -113,7 +114,7 @@ var _ = Describe("Property service", func() {
 		bkr.Publish(Service)
 		bkr.Start()
 
-		create10Properties(bkr)
+		createMultipleProperties(bkr, 10)
 
 		snapshotName := <-bkr.Call("propertyAggregate.snapshot", M{})
 

@@ -7,20 +7,20 @@ import (
 )
 
 // Aggregate returns an aggregator which contain functions such as (Create, )
-func Aggregate(name string, createAdapter AdapterFactory) Aggregator {
-	return &aggregator{name: name, createAdapter: createAdapter}
+func Aggregate(name string, storeFactory StoreFactory) Aggregator {
+	return &aggregator{name: name, storeFactory: storeFactory}
 }
 
 type aggregator struct {
 	name          string
-	createAdapter AdapterFactory
+	storeFactory  StoreFactory
 	serviceSchema moleculer.ServiceSchema
 
 	logger        *log.Entry
 	brokerContext moleculer.BrokerContext
 	parentService moleculer.ServiceSchema
 
-	snapshotStore EventStorer
+	eventStore    EventStorer
 	snapshotSetup SnapshotSetup
 }
 
@@ -59,7 +59,7 @@ func (a *aggregator) settings() map[string]interface{} {
 
 // createServiceSchema create the aggregate service schema.
 func (a *aggregator) createServiceSchema() {
-	adapter := a.createAdapter(a.name, a.fields(), a.settings())
+	adapter := a.storeFactory.Create(a.name, a.fields(), a.settings())
 	a.serviceSchema = moleculer.ServiceSchema{
 		Name:   a.name,
 		Mixins: []moleculer.Mixin{store.Mixin(adapter)},
@@ -131,15 +131,15 @@ func (a *aggregator) fields() map[string]interface{} {
 }
 
 //Snapshot setup the snashot options for this aggregate.
-func (a *aggregator) Snapshot(eventStore EventStorer, snapshotSetup SnapshotSetup) Aggregator {
-	a.snapshotStore = eventStore
-	a.snapshotSetup = snapshotSetup
+func (a *aggregator) Snapshot(eventStore EventStorer) Aggregator {
+	a.eventStore = eventStore
 	return a
 }
 
 //Proposal
 // - pause event pumps -> pause aggregate changes :)
 //  - create a snapshot event -> new events will pile up after this point! = Write is enabled.
+
 //  - ** no changes are happening on aggregates ** but reads continue happily.
 //  - backup aggregates -> aggregate.backup(snapshotName)  (SQLLite -> basicaly copy files :) )
 //  - restart the event pump :)
@@ -155,10 +155,13 @@ func (a *aggregator) snapshotAction(context moleculer.Context, params moleculer.
 	snapshotName := "xyz"
 	aggregateMetadata := map[string]interface{}{}
 
-	err := a.snapshotStore.StartSnapshot(snapshotName, aggregateMetadata)
+	err := a.eventStore.StartSnapshot(snapshotName, aggregateMetadata)
 	if err != nil {
 		// error creating the snapshot event
-
+	}
+	err = a.snapshotSetup.Backup(snapshotName)
+	if err != nil {
+		// error creating the backup
 	}
 
 	return snapshotName

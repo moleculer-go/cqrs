@@ -18,7 +18,8 @@ import (
 var _ = Describe("CQRS Pluggin", func() {
 	logLevel := "error"
 
-	adapterFactory := func(fields map[string]interface{}) AdapterFactory {
+	storeFactory := func(fields map[string]interface{}) StoreFactory {
+
 		return func(name string, cqrsFields, settings map[string]interface{}) store.Adapter {
 			return &sqlite.Adapter{
 				URI:     "file:memory:?mode=memory",
@@ -31,7 +32,7 @@ var _ = Describe("CQRS Pluggin", func() {
 	Describe("Event Store", func() {
 
 		createBroker := func(dispatchBatchSize int) *broker.ServiceBroker {
-			eventStore := EventStore("propertyEventStore", adapterFactory(map[string]interface{}{}))
+			eventStore := EventStore("propertyEventStore", storeFactory(map[string]interface{}{}))
 			service := moleculer.ServiceSchema{
 				Name:   "property",
 				Mixins: []moleculer.Mixin{eventStore.Mixin()},
@@ -159,7 +160,7 @@ var _ = Describe("CQRS Pluggin", func() {
 		}, 4)
 
 		It("should store extra fields in the event", func(done Done) {
-			eventStore := EventStore("userEventStore", adapterFactory(map[string]interface{}{}), map[string]interface{}{
+			eventStore := EventStore("userEventStore", storeFactory(map[string]interface{}{}), map[string]interface{}{
 				"tag": "string",
 			})
 			service := moleculer.ServiceSchema{
@@ -194,7 +195,7 @@ var _ = Describe("CQRS Pluggin", func() {
 	Describe("Aggregate", func() {
 
 		createBroker := func(dispatchBatchSize int) *broker.ServiceBroker {
-			eventStore := EventStore("propertyEventStore", adapterFactory(map[string]interface{}{}))
+			eventStore := EventStore("propertyEventStore", storeFactory(map[string]interface{}{}))
 			service := moleculer.ServiceSchema{
 				Name:   "property",
 				Mixins: []moleculer.Mixin{eventStore.Mixin()},
@@ -212,7 +213,7 @@ var _ = Describe("CQRS Pluggin", func() {
 			return bkr
 		}
 
-		notifications := Aggregate("notificationsAggregate", adapterFactory(map[string]interface{}{
+		notifications := Aggregate("notificationsAggregate", storeFactory(map[string]interface{}{
 			"eventId":      "integer",
 			"smsContent":   "string",
 			"pushContent":  "string",

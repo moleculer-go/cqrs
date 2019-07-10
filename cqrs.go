@@ -5,7 +5,10 @@ import (
 	"github.com/moleculer-go/store"
 )
 
-type AdapterFactory func(name string, fields, settings map[string]interface{}) store.Adapter
+type StoreFactory interface {
+	Backup(name string) error
+	Create(name string, fields, settings map[string]interface{}) store.Adapter
+}
 
 type Transformer func(context moleculer.Context, params moleculer.Payload) moleculer.Payload
 type ManyTransformer func(context moleculer.Context, params moleculer.Payload) []moleculer.Payload
@@ -13,10 +16,12 @@ type ManyTransformer func(context moleculer.Context, params moleculer.Payload) [
 type EventStorer interface {
 	Mixin() moleculer.Mixin
 	PersistEvent(eventName string, extraParams ...map[string]interface{}) moleculer.ActionHandler
+	StartSnapshot(snapshotName string, aggregateMetadata map[string]interface{}) error
+	CompleteSnapshot(snapshotName string) error
 }
 
 type SnapshotSetup interface {
-	Backup()
+	Backup(string) error
 }
 
 type Aggregator interface {
@@ -33,9 +38,7 @@ type Aggregator interface {
 	Update(Transformer) moleculer.EventHandler
 
 	// Snapshot configure the snapshot behaviour of the aggregate
-	Snapshot(EventStorer, SnapshotSetup) Aggregator
+	Snapshot(EventStorer) Aggregator
 
-	//ideas
-	//UpdateMany
 	//Remove
 }

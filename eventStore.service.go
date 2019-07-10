@@ -23,11 +23,11 @@ const (
 	StatusRetrying   = 4
 )
 
-func EventStore(name string, createAdapter AdapterFactory, fields ...M) EventStorer {
+func EventStore(name string, storeFactory StoreFactory, fields ...M) EventStorer {
 	return &eventStore{
-		name:          name,
-		createAdapter: createAdapter,
-		extraFields:   mergeMapsList(fields),
+		name:         name,
+		storeFactory: storeFactory,
+		extraFields:  mergeMapsList(fields),
 	}
 }
 
@@ -35,7 +35,7 @@ type eventStore struct {
 	name              string
 	eventStoreService moleculer.ServiceSchema
 	eventStoreAdapter store.Adapter
-	createAdapter     AdapterFactory
+	storeFactory      StoreFactory
 
 	extraFields map[string]interface{}
 
@@ -190,7 +190,7 @@ func (e *eventStore) settings() M {
 
 func (e *eventStore) createEventStoreService() {
 	fieldMap := e.fields()
-	e.eventStoreAdapter = e.createAdapter(e.name, fieldMap, e.settings())
+	e.eventStoreAdapter = e.storeFactory.Create(e.name, fieldMap, e.settings())
 
 	fields := []string{}
 	for f := range fieldMap {
@@ -250,9 +250,9 @@ func (e *eventStore) stopPump() {
 	}
 }
 
-// StartSnapshot starts a snapshot, pause event pump and create an event
-// that represents the start of the snapshot fo events after this point
-// can be processed when snapshot is completed.
+// StartSnapshot starts a snapshot:
+// 1) Pause event pump , so no morechanges to aggreagates will be done.
+// 2) Create an event to record the snapshot, so it can be replayed from this point.
 func (e *eventStore) StartSnapshot(snapshotName string, aggregateMetadata map[string]interface{}) error {
 	e.logger.Debug("StartSnapshot snapshotName: ", snapshotName)
 	//pause event pumps -> pause aggregate changes :)
@@ -274,21 +274,21 @@ func (e *eventStore) snapshotEvent(snapshotName string, aggregateMetadata map[st
 		"created":   time.Now().Unix(),
 		"status":    StatusComplete,
 		"eventType": TypeSnapshot,
+		"payload":   e.serializer.PayloadToBytes(payload.New(aggregateMetadata)),
 	}
-	event["payload"] = e.serializer.PayloadToBytes(payload.New(aggregateMetadata))
 
 	//save to the event store
 	r := <-e.brokerContext.Call(e.eventStoreService.Name+".create", event)
 	if r.IsError() {
 		return r.Error()
 	}
-	return r
+	return nil
 }
 
 // CompleteSnapshot complete a snapshot by resuming the event pump and
 // recording an event to represent this.
-func (e *eventStore) CompleteSnapshot(snapshotName string) {
-
+func (e *eventStore) CompleteSnapshot(snapshotName string) error {
+	return nil
 }
 
 // parseExtraParams extract valid extra parameters
