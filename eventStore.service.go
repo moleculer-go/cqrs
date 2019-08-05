@@ -1,6 +1,7 @@
 package cqrs
 
 import (
+	"errors"
 	"time"
 
 	"github.com/moleculer-go/moleculer"
@@ -14,6 +15,10 @@ const (
 	TypeCommand  = 0
 	TypeSnapshot = 1
 )
+
+const SnapshotCreated = "SnapshotCreated"
+const SnapshotCompleted = "SnapshotCompleted"
+const SnapshotFailed = "SnapshotFailed"
 
 const (
 	StatusCreated    = 0
@@ -253,28 +258,36 @@ func (e *eventStore) stopPump() {
 // StartSnapshot starts a snapshot:
 // 1) Pause event pump , so no morechanges to aggreagates will be done.
 // 2) Create an event to record the snapshot, so it can be replayed from this point.
+// Error Handling:
+//  In case snapshotEvent fails, it restarts the pump and returns the error.
 func (e *eventStore) StartSnapshot(snapshotName string, aggregateMetadata map[string]interface{}) error {
 	e.logger.Debug("StartSnapshot snapshotName: ", snapshotName)
 	//pause event pumps -> pause aggregate changes :)
 	e.stopPump()
 
 	err := e.snapshotEvent(snapshotName, aggregateMetadata)
+	if err != nil {
+		e.startPump()
+		return err
+	}
+	return nil
+}
 
+func (e *eventStore) startPump() {
 	e.stopping = false
-	e.logger.Debug("restarting event pump!")
+	e.logger.Debug("starting event pump!")
 	go e.dispatchEvents()
-
-	return err
 }
 
 // snapshotEvent create an snapshot event in the event store and stores the aggregate metadata as payload.
-func (e *eventStore) snapshotEvent(snapshotName string, aggregateMetadata map[string]interface{}) error {
+func (e *eventStore) snapshotEvent(snapshotID string, aggregateMetadata map[string]interface{}) error {
 	event := M{
-		"event":     "snapshot_" + snapshotName,
-		"created":   time.Now().Unix(),
-		"status":    StatusComplete,
-		"eventType": TypeSnapshot,
-		"payload":   e.serializer.PayloadToBytes(payload.New(aggregateMetadata)),
+		"event":          snapshotID,
+		"created":        time.Now().Unix(),
+		"status":         StatusComplete,
+		"eventType":      TypeSnapshot,
+		"snapshotStatus": SnapshotCreated,
+		"payload":        e.serializer.PayloadToBytes(payload.New(aggregateMetadata)),
 	}
 
 	//save to the event store
@@ -287,7 +300,36 @@ func (e *eventStore) snapshotEvent(snapshotName string, aggregateMetadata map[st
 
 // CompleteSnapshot complete a snapshot by resuming the event pump and
 // recording an event to represent this.
-func (e *eventStore) CompleteSnapshot(snapshotName string) error {
+func (e *eventStore) CompleteSnapshot(snapshotID string) error {
+	events := e.eventStoreAdapter.FindAndUpdate(payload.New(M{
+		"query": M{"event": snapshotID, "eventType": TypeSnapshot},
+		"limit": 1,
+		"update": M{
+			"snapshotStatus": SnapshotCompleted,
+			"updated":        time.Now().Unix(),
+		},
+	}))
+	if events.Len() < 1 {
+		return errors.New("No snapshot found with id: " + snapshotID)
+	}
+	e.startPump()
+	return nil
+}
+
+// FailSnapshot fails a snapshot by recording the failure in the event record.
+func (e *eventStore) FailSnapshot(snapshotID string) error {
+	events := e.eventStoreAdapter.FindAndUpdate(payload.New(M{
+		"query": M{"event": snapshotID, "eventType": TypeSnapshot},
+		"limit": 1,
+		"update": M{
+			"snapshotStatus": SnapshotFailed,
+			"updated":        time.Now().Unix(),
+		},
+	}))
+	if events.Len() < 1 {
+		return errors.New("No snapshot found with id: " + snapshotID)
+	}
+	e.startPump()
 	return nil
 }
 

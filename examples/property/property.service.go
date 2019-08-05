@@ -2,7 +2,6 @@ package property
 
 import (
 	"errors"
-	"fmt"
 
 	"github.com/moleculer-go/cqrs"
 	"github.com/moleculer-go/moleculer"
@@ -105,7 +104,7 @@ var Service = moleculer.ServiceSchema{
 // into then payload to be saved into the property aggregate
 func transformProperty(context moleculer.Context, event moleculer.Payload) moleculer.Payload {
 	property := event.Get("payload")
-	fmt.Println("transformProperty() property: ", property)
+	//fmt.Println("transformProperty() property: ", property)
 	return property
 }
 

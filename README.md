@@ -27,3 +27,8 @@ snapshotName := aggregate.snapshot():
  - events start processing from the snapshot moment
  - ** system takes a while to catch up **
  - system is eventually consistent :)
+
+
+## Event Store
+
+Write test cases for the lifecyc;e variable "dispatchEventsStopped"

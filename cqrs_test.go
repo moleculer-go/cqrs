@@ -15,24 +15,30 @@ import (
 	. "github.com/onsi/gomega"
 )
 
+type storeFactoryMock struct {
+	fields map[string]interface{}
+}
+
+func (f *storeFactoryMock) Backup(name string) (err error) {
+
+	return err
+}
+
+func (f *storeFactoryMock) Create(name string, cqrsFields, settings map[string]interface{}) store.Adapter {
+	return &sqlite.Adapter{
+		URI:     "file:memory:?mode=memory",
+		Table:   name,
+		Columns: FieldsToSQLiteColumns(f.fields, cqrsFields),
+	}
+}
+
 var _ = Describe("CQRS Pluggin", func() {
 	logLevel := "error"
-
-	storeFactory := func(fields map[string]interface{}) StoreFactory {
-
-		return func(name string, cqrsFields, settings map[string]interface{}) store.Adapter {
-			return &sqlite.Adapter{
-				URI:     "file:memory:?mode=memory",
-				Table:   name,
-				Columns: FieldsToSQLiteColumns(fields, cqrsFields),
-			}
-		}
-	}
 
 	Describe("Event Store", func() {
 
 		createBroker := func(dispatchBatchSize int) *broker.ServiceBroker {
-			eventStore := EventStore("propertyEventStore", storeFactory(map[string]interface{}{}))
+			eventStore := EventStore("propertyEventStore", &storeFactoryMock{map[string]interface{}{}})
 			service := moleculer.ServiceSchema{
 				Name:   "property",
 				Mixins: []moleculer.Mixin{eventStore.Mixin()},
@@ -160,7 +166,7 @@ var _ = Describe("CQRS Pluggin", func() {
 		}, 4)
 
 		It("should store extra fields in the event", func(done Done) {
-			eventStore := EventStore("userEventStore", storeFactory(map[string]interface{}{}), map[string]interface{}{
+			eventStore := EventStore("userEventStore", &storeFactoryMock{map[string]interface{}{}}, map[string]interface{}{
 				"tag": "string",
 			})
 			service := moleculer.ServiceSchema{
@@ -194,8 +200,8 @@ var _ = Describe("CQRS Pluggin", func() {
 
 	Describe("Aggregate", func() {
 
-		createBroker := func(dispatchBatchSize int) *broker.ServiceBroker {
-			eventStore := EventStore("propertyEventStore", storeFactory(map[string]interface{}{}))
+		createBroker := func(dispatchBatchSize int) (*broker.ServiceBroker, EventStorer) {
+			eventStore := EventStore("propertyEventStore", &storeFactoryMock{map[string]interface{}{}})
 			service := moleculer.ServiceSchema{
 				Name:   "property",
 				Mixins: []moleculer.Mixin{eventStore.Mixin()},
@@ -210,18 +216,51 @@ var _ = Describe("CQRS Pluggin", func() {
 				LogLevel: logLevel,
 			})
 			bkr.Publish(service)
-			return bkr
+			return bkr, eventStore
 		}
 
-		notifications := Aggregate("notificationsAggregate", storeFactory(map[string]interface{}{
+		notifications := Aggregate("notificationsAggregate", &storeFactoryMock{map[string]interface{}{
 			"eventId":      "integer",
 			"smsContent":   "string",
 			"pushContent":  "string",
 			"emailContent": "string",
-		}))
+		}})
+
+		//transform the incoming property.created event into X property notification records
+		createNotificationsService := func(records int, notificationsCreatedChan chan []moleculer.Payload) moleculer.ServiceSchema {
+			//createNotifications transforms the 'property.created' event and
+			createNotifications := func(context moleculer.Context, event moleculer.Payload) []moleculer.Payload {
+				property := event.Get("payload")
+				name := "John"
+				mobileMsg := "Hi " + name + ", Property " + property.Get("name").String() + " with " + property.Get("bedrooms").String() + " was added to your account!"
+				notifications := []moleculer.Payload{}
+				for index := 0; index < 5; index++ {
+					notification := payload.New(M{
+						"eventId":      event.Get("id").Int(),
+						"smsContent":   "[" + strconv.Itoa(index) + "] " + mobileMsg,
+						"pushContent":  "[" + strconv.Itoa(index) + "] " + mobileMsg,
+						"emailContent": "...",
+					})
+					notifications = append(notifications, notification)
+				}
+				//Just for testing purposes.. so we can use this channel to check if notifications were generated
+				go func() { notificationsCreatedChan <- notifications }()
+				return notifications
+			}
+			return moleculer.ServiceSchema{
+				Name:   "propertyNotifier",
+				Mixins: []moleculer.Mixin{notifications.Mixin()},
+				Events: []moleculer.Event{
+					{
+						Name:    "property.created",
+						Handler: notifications.CreateMany(createNotifications),
+					},
+				},
+			}
+		}
 
 		It("should transform one event and save one aggregate record", func(done Done) {
-			bkr := createBroker(1)
+			bkr, _ := createBroker(1)
 			notificationCreated := make(chan moleculer.Payload, 1)
 			//transform the incoming property.created event into a property notification aggregate record.
 			transformPropertyCreated := func(context moleculer.Context, event moleculer.Payload) moleculer.Payload {
@@ -280,37 +319,9 @@ var _ = Describe("CQRS Pluggin", func() {
 		}, 3)
 
 		It("should transform one event and save 5 aggregate records", func(done Done) {
-			bkr := createBroker(1)
+			bkr, _ := createBroker(1)
 			notificationsCreated := make(chan []moleculer.Payload, 1)
-			//transform the incoming property.created event into 5 property
-			//notification aggregate records
-			createNotifications := func(context moleculer.Context, event moleculer.Payload) []moleculer.Payload {
-				property := event.Get("payload")
-				name := "John"
-				mobileMsg := "Hi " + name + ", Property " + property.Get("name").String() + " with " + property.Get("bedrooms").String() + " was added to your account!"
-				notifications := []moleculer.Payload{}
-				for index := 0; index < 5; index++ {
-					notification := payload.New(M{
-						"eventId":      event.Get("id").Int(),
-						"smsContent":   "[" + strconv.Itoa(index) + "] " + mobileMsg,
-						"pushContent":  "[" + strconv.Itoa(index) + "] " + mobileMsg,
-						"emailContent": "...",
-					})
-					notifications = append(notifications, notification)
-				}
-				notificationsCreated <- notifications
-				return notifications
-			}
-			bkr.Publish(moleculer.ServiceSchema{
-				Name:   "propertyNotifier",
-				Mixins: []moleculer.Mixin{notifications.Mixin()},
-				Events: []moleculer.Event{
-					{
-						Name:    "property.created",
-						Handler: notifications.CreateMany(createNotifications),
-					},
-				},
-			})
+			bkr.Publish(createNotificationsService(5, notificationsCreated))
 			bkr.Start()
 
 			//aggregate starts empty
@@ -331,7 +342,7 @@ var _ = Describe("CQRS Pluggin", func() {
 			Expect(notifications[0].Get("emailContent").String()).Should(Equal("..."))
 			Expect(notifications[3].Get("pushContent").String()).Should(Equal("[3] Hi John, Property Beach villa with 12 was added to your account!"))
 
-			//wait forone record to be created in the aggregate :)
+			//wait for one record to be created in the aggregate :)
 			for {
 				notificationsCount = <-bkr.Call("notificationsAggregate.count", M{})
 				Expect(notificationsCount.Error()).Should(Succeed())
@@ -343,6 +354,108 @@ var _ = Describe("CQRS Pluggin", func() {
 			bkr.Stop()
 			close(done)
 		}, 3)
+
+		It("should fail snapshot when aggregate is not configured for snapsot :)", func(done Done) {
+			bkr, _ := createBroker(1)
+			notificationsCreated := make(chan []moleculer.Payload, 1)
+			bkr.Publish(createNotificationsService(5, notificationsCreated))
+			bkr.Start()
+			snapshotName := <-bkr.Call("notificationsAggregate.snapshot", M{})
+			Expect(snapshotName.Error()).Should(HaveOccurred())
+			Expect(snapshotName.Error().Error()).Should(Equal("snapshot not configured for this aggregate. eventStore is nil"))
+			bkr.Stop()
+			close(done)
+		})
+
+		FIt("should fail snapshot when aggregate backup is not configured - missing backupFolder from service settings", func(done Done) {
+			bkr, eventStore := createBroker(1)
+			notificationsCreated := make(chan []moleculer.Payload, 1)
+			notifications.Snapshot(eventStore)
+			bkr.Publish(createNotificationsService(5, notificationsCreated))
+			bkr.Start()
+
+			//aggregate starts empty
+			notificationsCount := <-bkr.Call("notificationsAggregate.count", M{})
+			Expect(notificationsCount.Error()).Should(Succeed())
+			Expect(notificationsCount.Int()).Should(Equal(0))
+
+			//create 10 properties..
+			for index := 0; index < 10; index++ {
+				evt := <-bkr.Call("property.create", map[string]string{
+					"listingId": "100000",
+					"name":      "Beach villa",
+					"bedrooms":  "12",
+				})
+				Expect(evt.Error()).Should(Succeed())
+			}
+
+			//wait for 50 records in the aggregate :)
+			for {
+				go func() { <-notificationsCreated }()
+				notificationsCount = <-bkr.Call("notificationsAggregate.count", M{})
+				Expect(notificationsCount.Error()).Should(Succeed())
+				if notificationsCount.Int() == 50 {
+					break
+				}
+			}
+
+			result := <-bkr.Call("notificationsAggregate.snapshot", M{})
+			Expect(result.Error()).ShouldNot(Succeed())
+			Expect(result.Error().Error()).Should(Equal("aggregate.snapshot action failed. We could not backup the aggregate. Error: no backup folder setup! missing backupFolder from service settings"))
+
+			bkr.Stop()
+			close(done)
+		}, 2)
+
+		It("should snapshot the current aggreate data - backup data and create event to record snapshot", func(done Done) {
+			bkr, eventStore := createBroker(1)
+			notificationsCreated := make(chan []moleculer.Payload, 1)
+			notifications.Snapshot(eventStore)
+			service := createNotificationsService(5, notificationsCreated)
+			// service.Settings = M{
+			// 	"backupFolder": "~/snapshot_bkp/",
+			// }
+			bkr.Publish(service)
+			bkr.Start()
+
+			//aggregate starts empty
+			notificationsCount := <-bkr.Call("notificationsAggregate.count", M{})
+			Expect(notificationsCount.Error()).Should(Succeed())
+			Expect(notificationsCount.Int()).Should(Equal(0))
+
+			//create 10 properties..
+			for index := 0; index < 10; index++ {
+				evt := <-bkr.Call("property.create", map[string]string{
+					"listingId": "100000",
+					"name":      "Beach villa",
+					"bedrooms":  "12",
+				})
+				Expect(evt.Error()).Should(Succeed())
+			}
+
+			//wait for 50 records in the aggregate :)
+			for {
+				go func() { <-notificationsCreated }()
+				notificationsCount = <-bkr.Call("notificationsAggregate.count", M{})
+				Expect(notificationsCount.Error()).Should(Succeed())
+				if notificationsCount.Int() == 50 {
+					break
+				}
+			}
+
+			snapshotName := <-bkr.Call("notificationsAggregate.snapshot", M{})
+			Expect(snapshotName.Error()).Should(Succeed())
+			Expect(snapshotName.String()).ShouldNot(Equal(""))
+
+			//check snapshot event
+
+			//check bkp file created
+
+			//check event pump is back
+
+			bkr.Stop()
+			close(done)
+		}, 10)
 
 	})
 

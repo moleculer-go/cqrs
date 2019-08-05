@@ -1,7 +1,10 @@
 package cqrs
 
 import (
+	"errors"
+
 	"github.com/moleculer-go/moleculer"
+	"github.com/moleculer-go/moleculer/util"
 	"github.com/moleculer-go/store"
 	log "github.com/sirupsen/logrus"
 )
@@ -20,8 +23,7 @@ type aggregator struct {
 	brokerContext moleculer.BrokerContext
 	parentService moleculer.ServiceSchema
 
-	eventStore    EventStorer
-	snapshotSetup SnapshotSetup
+	eventStore EventStorer
 }
 
 // Mixin return the mixin schema for CQRS plugin
@@ -76,14 +78,14 @@ func (a *aggregator) createServiceSchema() {
 // The event handler will create an aggregate record in the aggregate store.
 func (a *aggregator) Create(transform Transformer) moleculer.EventHandler {
 	return func(c moleculer.Context, event moleculer.Payload) {
-		eventId := event.Get("id").String()
+		eventID := event.Get("id").String()
 		record := transform(c, event)
 		if record.IsError() {
-			c.Logger().Error(a.name+".Create() Could not transform event - eventId: ", eventId, " - error: ", record.Error())
+			c.Logger().Error(a.name+".Create() Could not transform event - eventId: ", eventID, " - error: ", record.Error())
 			c.Emit(a.name+".created.error", record)
 			return
 		}
-		c.Call(a.name+".create", record.Add("eventId", eventId))
+		c.Call(a.name+".create", record.Add("eventId", eventID))
 	}
 }
 
@@ -91,15 +93,15 @@ func (a *aggregator) Create(transform Transformer) moleculer.EventHandler {
 // The event handler will create multiple  aggregate records in the aggregate store.
 func (a *aggregator) CreateMany(transform ManyTransformer) moleculer.EventHandler {
 	return func(c moleculer.Context, event moleculer.Payload) {
-		eventId := event.Get("id").String()
+		eventID := event.Get("id").String()
 		records := transform(c, event)
 		for _, record := range records {
 			if record.IsError() {
-				c.Logger().Error("Aggregate.CreateMany() Could not transform event - eventId: ", eventId, " - error: ", record.Error())
+				c.Logger().Error("Aggregate.CreateMany() Could not transform event - eventId: ", eventID, " - error: ", record.Error())
 				c.Emit(a.name+".create.error", record)
 				continue
 			}
-			c.Call(a.name+".create", record.Add("eventId", eventId))
+			c.Call(a.name+".create", record.Add("eventId", eventID))
 		}
 	}
 }
@@ -108,17 +110,17 @@ func (a *aggregator) CreateMany(transform ManyTransformer) moleculer.EventHandle
 // The event handler will update an existing aggregate record in the aggregate store.
 func (a *aggregator) Update(transform Transformer) moleculer.EventHandler {
 	return func(c moleculer.Context, event moleculer.Payload) {
-		eventId := event.Get("id").String()
+		eventID := event.Get("id").String()
 		record := transform(c, event)
 		if record.IsError() {
-			c.Logger().Error(a.name+".Update() Could not transform event - eventId: ", eventId, " - error: ", record.Error())
+			c.Logger().Error(a.name+".Update() Could not transform event - eventId: ", eventID, " - error: ", record.Error())
 			c.Emit(a.name+".updated.error", record)
 			return
 		}
 		if record.Get("id").Exists() {
-			c.Call(a.name+".update", record.Add("eventId", eventId))
+			c.Call(a.name+".update", record.Add("eventId", eventID))
 		} else {
-			c.Call(a.name+".create", record.Add("eventId", eventId))
+			c.Call(a.name+".create", record.Add("eventId", eventID))
 		}
 	}
 }
@@ -138,10 +140,10 @@ func (a *aggregator) Snapshot(eventStore EventStorer) Aggregator {
 
 //Proposal
 // - pause event pumps -> pause aggregate changes :)
-//  - create a snapshot event -> new events will pile up after this point! = Write is enabled.
+//  - create a snapshot event -> new events will pile up after this point! = While Write is enabled.
 
-//  - ** no changes are happening on aggregates ** but reads continue happily.
-//  - backup aggregates -> aggregate.backup(snapshotName)  (SQLLite -> basicaly copy files :) )
+//  - ** no changes are happening on aggregates ** while reads continues happily.
+//  - backup aggregates -> aggregate.backup(snapshotID)  (SQLLite -> basicaly copy files :) )
 //  - restart the event pump :)
 //  - done.
 //  - Error scenarios:
@@ -151,18 +153,29 @@ func (a *aggregator) Snapshot(eventStore EventStorer) Aggregator {
 
 //snapshotAction - snapshot the aggregate
 func (a *aggregator) snapshotAction(context moleculer.Context, params moleculer.Payload) interface{} {
+	if a.eventStore == nil {
+		return errors.New("snapshot not configured for this aggregate. eventStore is nil")
+	}
+
 	//snapshot the aggregate
-	snapshotName := "xyz"
+	snapshotID := "snapshot_" + util.RandomString(12)
 	aggregateMetadata := map[string]interface{}{}
 
-	err := a.eventStore.StartSnapshot(snapshotName, aggregateMetadata)
+	err := a.eventStore.StartSnapshot(snapshotID, aggregateMetadata)
 	if err != nil {
 		// error creating the snapshot event
+		return errors.New("aggregate.snapshot action failed. We could not create the snapshot event. Error: " + err.Error())
 	}
-	err = a.snapshotSetup.Backup(snapshotName)
+	err = a.storeFactory.Backup(snapshotID)
 	if err != nil {
+		a.eventStore.FailSnapshot(snapshotID)
 		// error creating the backup
+		return errors.New("aggregate.snapshot action failed. We could not backup the aggregate. Error: " + err.Error())
 	}
 
-	return snapshotName
+	err = a.eventStore.CompleteSnapshot(snapshotID)
+	if err != nil {
+		return errors.New("aggregate.snapshot action failed. We could not create the snapshot complete event. Error: " + err.Error())
+	}
+	return snapshotID
 }

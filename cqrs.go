@@ -16,12 +16,11 @@ type ManyTransformer func(context moleculer.Context, params moleculer.Payload) [
 type EventStorer interface {
 	Mixin() moleculer.Mixin
 	PersistEvent(eventName string, extraParams ...map[string]interface{}) moleculer.ActionHandler
+
+	//try to move these to a interface just around snapshoter
 	StartSnapshot(snapshotName string, aggregateMetadata map[string]interface{}) error
 	CompleteSnapshot(snapshotName string) error
-}
-
-type SnapshotSetup interface {
-	Backup(string) error
+	FailSnapshot(snapshotName string) error
 }
 
 type Aggregator interface {
