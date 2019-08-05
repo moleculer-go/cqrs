@@ -156,6 +156,9 @@ func (a *aggregator) snapshotAction(context moleculer.Context, params moleculer.
 	if a.eventStore == nil {
 		return errors.New("snapshot not configured for this aggregate. eventStore is nil")
 	}
+	if a.storeFactory == nil {
+		return errors.New("this aggregate has no data store configuration")
+	}
 
 	//snapshot the aggregate
 	snapshotID := "snapshot_" + util.RandomString(12)

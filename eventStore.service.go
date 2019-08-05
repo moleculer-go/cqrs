@@ -13,12 +13,10 @@ import (
 
 const (
 	TypeCommand  = 0
-	TypeSnapshot = 1
+	TypeSnapshotCreated = 1
+	TypeSnapshotCompleted = 2
+	TypeSnapshotFailed = 3
 )
-
-const SnapshotCreated = "SnapshotCreated"
-const SnapshotCompleted = "SnapshotCompleted"
-const SnapshotFailed = "SnapshotFailed"
 
 const (
 	StatusCreated    = 0
@@ -285,8 +283,7 @@ func (e *eventStore) snapshotEvent(snapshotID string, aggregateMetadata map[stri
 		"event":          snapshotID,
 		"created":        time.Now().Unix(),
 		"status":         StatusComplete,
-		"eventType":      TypeSnapshot,
-		"snapshotStatus": SnapshotCreated,
+		"eventType":      TypeSnapshotCreated,
 		"payload":        e.serializer.PayloadToBytes(payload.New(aggregateMetadata)),
 	}
 
@@ -302,10 +299,10 @@ func (e *eventStore) snapshotEvent(snapshotID string, aggregateMetadata map[stri
 // recording an event to represent this.
 func (e *eventStore) CompleteSnapshot(snapshotID string) error {
 	events := e.eventStoreAdapter.FindAndUpdate(payload.New(M{
-		"query": M{"event": snapshotID, "eventType": TypeSnapshot},
+		"query": M{"event": snapshotID, "eventType": TypeSnapshotCreated},
 		"limit": 1,
 		"update": M{
-			"snapshotStatus": SnapshotCompleted,
+			"eventType":      TypeSnapshotCompleted,
 			"updated":        time.Now().Unix(),
 		},
 	}))
@@ -319,10 +316,10 @@ func (e *eventStore) CompleteSnapshot(snapshotID string) error {
 // FailSnapshot fails a snapshot by recording the failure in the event record.
 func (e *eventStore) FailSnapshot(snapshotID string) error {
 	events := e.eventStoreAdapter.FindAndUpdate(payload.New(M{
-		"query": M{"event": snapshotID, "eventType": TypeSnapshot},
+		"query": M{"event": snapshotID, "eventType": TypeSnapshotCreated},
 		"limit": 1,
 		"update": M{
-			"snapshotStatus": SnapshotFailed,
+			"eventType":      TypeSnapshotFailed,
 			"updated":        time.Now().Unix(),
 		},
 	}))

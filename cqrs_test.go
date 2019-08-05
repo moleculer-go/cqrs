@@ -3,6 +3,9 @@ package cqrs
 import (
 	"strconv"
 	"time"
+	"errors"
+	"fmt"
+	"os"
 
 	"github.com/moleculer-go/moleculer/payload"
 	"github.com/moleculer-go/moleculer/serializer"
@@ -16,19 +19,52 @@ import (
 )
 
 type storeFactoryMock struct {
-	fields map[string]interface{}
+	backup func(name string) (err error)
+	create func(name string, cqrsFields, settings map[string]interface{}) store.Adapter
 }
 
 func (f *storeFactoryMock) Backup(name string) (err error) {
-
-	return err
+	if f.backup == nil {
+		return errors.New("backup not setup")
+	}
+	return f.backup(name)
 }
 
 func (f *storeFactoryMock) Create(name string, cqrsFields, settings map[string]interface{}) store.Adapter {
-	return &sqlite.Adapter{
-		URI:     "file:memory:?mode=memory",
-		Table:   name,
-		Columns: FieldsToSQLiteColumns(f.fields, cqrsFields),
+	return f.create(name, cqrsFields, settings)
+}
+
+func sqliteMemory(fields ... map[string]interface{}) (func (name string, cqrsFields, settings map[string]interface{}) store.Adapter) {
+	return func (name string, cqrsFields, settings map[string]interface{}) store.Adapter { 
+		allFields := append(fields, cqrsFields)
+		return &sqlite.Adapter{
+			URI:     "file:memory:?mode=memory",
+			Table:   name,
+			Columns: FieldsToSQLiteColumns(allFields...),
+		}
+	}
+}
+
+func sqliteBackup(dbFolder, backupFolder string) func(string) error {
+	return func(name string) error {
+		return sqlite.FileCopyBackup(name, "file:" + dbFolder, backupFolder)
+	}
+}
+
+func sqliteFile(folder string, fields ... map[string]interface{}) (func (name string, cqrsFields, settings map[string]interface{}) store.Adapter) {
+	return func (name string, cqrsFields, settings map[string]interface{}) store.Adapter { 
+		allFields := append(fields, cqrsFields)
+		//make sure folder exists
+		err := os.MkdirAll(folder, os.ModePerm)
+		if err != nil {
+			fmt.Println("### Error trying to create sqlite db folder: ", folder, " Error: ", err)
+		}
+		fmt.Println("### SQLIte Folder created ! --> ", folder)
+		return &sqlite.Adapter{
+			URI:     "file:" + folder,
+			Table:   name,
+			Columns: FieldsToSQLiteColumns(allFields...),
+		}
 	}
 }
 
@@ -38,7 +74,7 @@ var _ = Describe("CQRS Pluggin", func() {
 	Describe("Event Store", func() {
 
 		createBroker := func(dispatchBatchSize int) *broker.ServiceBroker {
-			eventStore := EventStore("propertyEventStore", &storeFactoryMock{map[string]interface{}{}})
+			eventStore := EventStore("propertyEventStore", &storeFactoryMock{create:sqliteMemory()})
 			service := moleculer.ServiceSchema{
 				Name:   "property",
 				Mixins: []moleculer.Mixin{eventStore.Mixin()},
@@ -166,7 +202,7 @@ var _ = Describe("CQRS Pluggin", func() {
 		}, 4)
 
 		It("should store extra fields in the event", func(done Done) {
-			eventStore := EventStore("userEventStore", &storeFactoryMock{map[string]interface{}{}}, map[string]interface{}{
+			eventStore := EventStore("userEventStore", &storeFactoryMock{create:sqliteMemory()}, map[string]interface{}{
 				"tag": "string",
 			})
 			service := moleculer.ServiceSchema{
@@ -199,9 +235,7 @@ var _ = Describe("CQRS Pluggin", func() {
 	})
 
 	Describe("Aggregate", func() {
-
-		createBroker := func(dispatchBatchSize int) (*broker.ServiceBroker, EventStorer) {
-			eventStore := EventStore("propertyEventStore", &storeFactoryMock{map[string]interface{}{}})
+		createBrokerWithEventStore := func(dispatchBatchSize int, eventStore EventStorer) *broker.ServiceBroker {
 			service := moleculer.ServiceSchema{
 				Name:   "property",
 				Mixins: []moleculer.Mixin{eventStore.Mixin()},
@@ -216,15 +250,22 @@ var _ = Describe("CQRS Pluggin", func() {
 				LogLevel: logLevel,
 			})
 			bkr.Publish(service)
-			return bkr, eventStore
+			return bkr 
+		}
+		createBroker := func(dispatchBatchSize int) (*broker.ServiceBroker, EventStorer) {
+			eventStore := EventStore("propertyEventStore", &storeFactoryMock{create:sqliteMemory()})
+			return createBrokerWithEventStore(
+				dispatchBatchSize, 
+				eventStore,
+			), eventStore
 		}
 
-		notifications := Aggregate("notificationsAggregate", &storeFactoryMock{map[string]interface{}{
+		notifications := Aggregate("notificationsAggregate", &storeFactoryMock{create:sqliteMemory(map[string]interface{}{
 			"eventId":      "integer",
 			"smsContent":   "string",
 			"pushContent":  "string",
 			"emailContent": "string",
-		}})
+		} )})
 
 		//transform the incoming property.created event into X property notification records
 		createNotificationsService := func(records int, notificationsCreatedChan chan []moleculer.Payload) moleculer.ServiceSchema {
@@ -367,7 +408,7 @@ var _ = Describe("CQRS Pluggin", func() {
 			close(done)
 		})
 
-		FIt("should fail snapshot when aggregate backup is not configured - missing backupFolder from service settings", func(done Done) {
+		It("should fail snapshot when aggregate backup is not configured - missing backupFolder from service settings", func(done Done) {
 			bkr, eventStore := createBroker(1)
 			notificationsCreated := make(chan []moleculer.Payload, 1)
 			notifications.Snapshot(eventStore)
@@ -401,14 +442,17 @@ var _ = Describe("CQRS Pluggin", func() {
 
 			result := <-bkr.Call("notificationsAggregate.snapshot", M{})
 			Expect(result.Error()).ShouldNot(Succeed())
-			Expect(result.Error().Error()).Should(Equal("aggregate.snapshot action failed. We could not backup the aggregate. Error: no backup folder setup! missing backupFolder from service settings"))
+			Expect(result.Error().Error()).Should(Equal("aggregate.snapshot action failed. We could not backup the aggregate. Error: backup not setup"))
 
 			bkr.Stop()
 			close(done)
 		}, 2)
 
-		It("should snapshot the current aggreate data - backup data and create event to record snapshot", func(done Done) {
-			bkr, eventStore := createBroker(1)
+		It("should snapshot the current aggregate data - backup data and create event to record snapshot", func(done Done) {
+			dbFolder := "/Users/rafael/temp_test_dbs/snapshot"
+			bkpFolder := "/Users/rafael/temp_test_dbs/snapshot_bkp"
+			eventStore := EventStore("propertyEventStore", &storeFactoryMock{create:sqliteFile(dbFolder), backup:sqliteBackup(dbFolder, bkpFolder)})
+			bkr := createBrokerWithEventStore(1, eventStore)
 			notificationsCreated := make(chan []moleculer.Payload, 1)
 			notifications.Snapshot(eventStore)
 			service := createNotificationsService(5, notificationsCreated)
