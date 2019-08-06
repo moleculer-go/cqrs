@@ -3,6 +3,8 @@ package cqrs
 import (
 	"errors"
 	"fmt"
+	"io/ioutil"
+	"log"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -465,6 +467,28 @@ var _ = Describe("CQRS Pluggin", func() {
 				}
 			})
 
+			countContents := func(folder string) int {
+				files, err := ioutil.ReadDir(folder)
+				if err != nil {
+					log.Fatal(err)
+				}
+				return len(files)
+			}
+
+			bkpContents := func(path string) string {
+				directory, _ := os.Open(path)
+				objects, err := directory.Readdir(-1)
+				if err != nil {
+					log.Fatal(err)
+				}
+				for _, obj := range objects {
+					if obj.IsDir() {
+						return path + "/" + obj.Name()
+					}
+				}
+				return ""
+			}
+
 			It("should snapshot the current aggregate data - backup data and create event to record snapshot", func(done Done) {
 
 				factoryMock := &storeFactoryMock{create: sqliteFile(dbFile), backup: sqliteBackup(dbFile, bkpFolder)}
@@ -511,15 +535,44 @@ var _ = Describe("CQRS Pluggin", func() {
 				Expect(snapshotName.Error()).Should(Succeed())
 				Expect(snapshotName.String()).ShouldNot(Equal(""))
 
-				//check snapshot event
+				//wait for the snapshot event
+				for {
+					snapEventCount := <-bkr.Call("propertyEventStore.count", M{"query": M{"eventType": TypeSnapshotCompleted}})
+					Expect(snapEventCount.Error()).Should(Succeed())
+					if snapEventCount.Int() == 1 {
+						break
+					}
+				}
 
 				//check bkp file created
+				Expect(countContents(bkpFolder)).Should(Equal(1))
+				Expect(countContents(bkpContents(bkpFolder))).Should(Equal(3))
 
 				//check event pump is back
+				evt := <-bkr.Call("property.create", map[string]string{
+					"listingId": "100000",
+					"name":      "Beach villa",
+					"bedrooms":  "12",
+				})
+				Expect(evt.Error()).Should(Succeed())
+
+				//wait for 55 records in the aggregate :)
+				for {
+					go func() { <-notificationsCreated }()
+					notificationsCount = <-bkr.Call("notificationsAggregate.count", M{})
+					Expect(notificationsCount.Error()).Should(Succeed())
+					if notificationsCount.Int() == 55 {
+						break
+					}
+				}
 
 				bkr.Stop()
 				close(done)
-			}, 3)
+			}, 4)
+
+			It("should restore a snapshot and start processing from point of last restore", func(done Done) {
+
+			})
 		})
 
 	})
