@@ -10,8 +10,8 @@ import (
 )
 
 // Aggregate returns an aggregator which contain functions such as (Create, )
-func Aggregate(name string, storeFactory StoreFactory) Aggregator {
-	return &aggregator{name: name, adapter: storeFactory(name, M{}, M{})}
+func Aggregate(name string, storeFactory StoreFactory, backup BackupStrategy) Aggregator {
+	return &aggregator{name: name, adapter: storeFactory(name, M{}, M{}), backup: backup}
 }
 
 type aggregator struct {
@@ -24,6 +24,8 @@ type aggregator struct {
 	parentService moleculer.ServiceSchema
 
 	eventStore EventStorer
+
+	backup BackupStrategy
 }
 
 // Mixin return the mixin schema for CQRS plugin
@@ -175,7 +177,7 @@ func (a *aggregator) snapshotAction(context moleculer.Context, params moleculer.
 		// error creating the snapshot event
 		return errors.New("aggregate.snapshot action failed. We could not create the snapshot event. Error: " + err.Error())
 	}
-	err = a.backup(snapshotID)
+	err = a.backup(snapshotID, a.settings)
 	if err != nil {
 		a.eventStore.FailSnapshot(snapshotID)
 		// error creating the backup
@@ -187,11 +189,6 @@ func (a *aggregator) snapshotAction(context moleculer.Context, params moleculer.
 		return errors.New("aggregate.snapshot action failed. We could not create the snapshot complete event. Error: " + err.Error())
 	}
 	return snapshotID
-}
-
-func (a *aggregator) backup(snapshotID string) (err error) {
-
-	return err
 }
 
 // restore a backup from a certain snapshot point.
@@ -218,4 +215,11 @@ func (a *aggregator) restoreAndReplayAction(context moleculer.Context, params mo
 
 func (a *aggregator) replayAction(context moleculer.Context, params moleculer.Payload) interface{} {
 	return nil
+}
+
+//JsonDumpBackup creates a JSON dump of the aggregate and
+// saves to the backup folder specified in the service settings.
+func JsonDumpBackup(snapshotID string, settings map[string]interface{}) (err error) {
+	
+	return err
 }

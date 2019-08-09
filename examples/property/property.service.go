@@ -17,13 +17,6 @@ func resolveSQLiteURI(settings map[string]interface{}) string {
 	return "file://" + folder.(string)
 }
 
-// sqliteStore used by the CQRS mixin to create
-// the data store adapter for its models and backup on snapshots.
-// type sqliteStore struct {
-// 	fields   map[string]interface{}
-// 	settings map[string]interface{}
-// }
-
 func storeFactory(fields ...map[string]interface{}) cqrs.StoreFactory {
 	return func(name string, cqrsFields, settings map[string]interface{}) store.Adapter {
 		fields = append(fields, cqrsFields)
@@ -45,39 +38,46 @@ func storeFactory(fields ...map[string]interface{}) cqrs.StoreFactory {
 
 var events = cqrs.EventStore("propertyEventStore", storeFactory())
 
-var propertySummaryAg = cqrs.Aggregate("propertySummaryAggregate", storeFactory(map[string]interface{}{
-	"countryCode": "string",
-	"total":       "integer",
-	"beachCity":   "integer",
-	"mountain":    "integer",
-})).Snapshot(events)
+var propertySummaryAg = cqrs.Aggregate(
+	"propertySummaryAggregate",
+	storeFactory(map[string]interface{}{
+		"countryCode": "string",
+		"total":       "integer",
+		"beachCity":   "integer",
+		"mountain":    "integer",
+	}),
+	cqrs.JsonDumpBackup,
+).Snapshot(events)
 
-var propertiesAg = cqrs.Aggregate("propertyAggregate", storeFactory(map[string]interface{}{
-	"name":        "string",
-	"title":       "string",
-	"description": "string",
-	"active":      "bool",
-	"owner":       "string",
-	"bedrooms":    "integer",
-	"bathrooms":   "float",
-	"maxGuests":   "integer",
-	"sqrMeters":   "integer",
-	//The primary street address of the property.
-	"addressOne": "string",
-	//The secondary street address of the property.
-	"addressTwo":  "string",
-	"city":        "string",
-	"region":      "string",
-	"postalCode":  "string",
-	"countryCode": "string",
-	"latitude":    "float",
-	"longitude":   "float",
-	"source": map[string]string{
-		"name":      "string",
-		"sourceId":  "string",
-		"sourceIds": "map",
-	},
-})).Snapshot(events)
+var propertiesAg = cqrs.Aggregate(
+	"propertyAggregate",
+	storeFactory(map[string]interface{}{
+		"name":        "string",
+		"title":       "string",
+		"description": "string",
+		"active":      "bool",
+		"owner":       "string",
+		"bedrooms":    "integer",
+		"bathrooms":   "float",
+		"maxGuests":   "integer",
+		"sqrMeters":   "integer",
+		//The primary street address of the property.
+		"addressOne": "string",
+		//The secondary street address of the property.
+		"addressTwo":  "string",
+		"city":        "string",
+		"region":      "string",
+		"postalCode":  "string",
+		"countryCode": "string",
+		"latitude":    "float",
+		"longitude":   "float",
+		"source": map[string]string{
+			"name":      "string",
+			"sourceId":  "string",
+			"sourceIds": "map",
+		},
+	}),
+	cqrs.JsonDumpBackup).Snapshot(events)
 
 var Service = moleculer.ServiceSchema{
 	Name:   "property",
