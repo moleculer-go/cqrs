@@ -12,10 +12,10 @@ import (
 )
 
 const (
-	TypeCommand  = 0
-	TypeSnapshotCreated = 1
+	TypeCommand           = 0
+	TypeSnapshotCreated   = 1
 	TypeSnapshotCompleted = 2
-	TypeSnapshotFailed = 3
+	TypeSnapshotFailed    = 3
 )
 
 const (
@@ -193,7 +193,7 @@ func (e *eventStore) settings() M {
 
 func (e *eventStore) createEventStoreService() {
 	fieldMap := e.fields()
-	e.eventStoreAdapter = e.storeFactory.Create(e.name, fieldMap, e.settings())
+	e.eventStoreAdapter = e.storeFactory(e.name, fieldMap, e.settings())
 
 	fields := []string{}
 	for f := range fieldMap {
@@ -280,11 +280,11 @@ func (e *eventStore) startPump() {
 // snapshotEvent create an snapshot event in the event store and stores the aggregate metadata as payload.
 func (e *eventStore) snapshotEvent(snapshotID string, aggregateMetadata map[string]interface{}) error {
 	event := M{
-		"event":          snapshotID,
-		"created":        time.Now().Unix(),
-		"status":         StatusComplete,
-		"eventType":      TypeSnapshotCreated,
-		"payload":        e.serializer.PayloadToBytes(payload.New(aggregateMetadata)),
+		"event":     snapshotID,
+		"created":   time.Now().Unix(),
+		"status":    StatusComplete,
+		"eventType": TypeSnapshotCreated,
+		"payload":   e.serializer.PayloadToBytes(payload.New(aggregateMetadata)),
 	}
 
 	//save to the event store
@@ -302,8 +302,8 @@ func (e *eventStore) CompleteSnapshot(snapshotID string) error {
 		"query": M{"event": snapshotID, "eventType": TypeSnapshotCreated},
 		"limit": 1,
 		"update": M{
-			"eventType":      TypeSnapshotCompleted,
-			"updated":        time.Now().Unix(),
+			"eventType": TypeSnapshotCompleted,
+			"updated":   time.Now().Unix(),
 		},
 	}))
 	if events.Len() < 1 {
@@ -319,8 +319,8 @@ func (e *eventStore) FailSnapshot(snapshotID string) error {
 		"query": M{"event": snapshotID, "eventType": TypeSnapshotCreated},
 		"limit": 1,
 		"update": M{
-			"eventType":      TypeSnapshotFailed,
-			"updated":        time.Now().Unix(),
+			"eventType": TypeSnapshotFailed,
+			"updated":   time.Now().Unix(),
 		},
 	}))
 	if events.Len() < 1 {

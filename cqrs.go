@@ -5,10 +5,10 @@ import (
 	"github.com/moleculer-go/store"
 )
 
-type StoreFactory interface {
-	Backup(name string) error
-	Create(name string, fields, settings map[string]interface{}) store.Adapter
-}
+// type StoreFactory interface {
+// 	Backup(name string) error
+// 	Create(name string, fields, settings map[string]interface{}) store.Adapter
+// }
 
 type Transformer func(context moleculer.Context, params moleculer.Payload) moleculer.Payload
 type ManyTransformer func(context moleculer.Context, params moleculer.Payload) []moleculer.Payload
@@ -22,6 +22,8 @@ type EventStorer interface {
 	CompleteSnapshot(snapshotName string) error
 	FailSnapshot(snapshotName string) error
 }
+
+type StoreFactory func(name string, cqrsFields, settings map[string]interface{}) store.Adapter
 
 type Aggregator interface {
 	Mixin() moleculer.Mixin

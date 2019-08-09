@@ -11,12 +11,12 @@ import (
 
 // Aggregate returns an aggregator which contain functions such as (Create, )
 func Aggregate(name string, storeFactory StoreFactory) Aggregator {
-	return &aggregator{name: name, storeFactory: storeFactory}
+	return &aggregator{name: name, adapter: storeFactory(name, M{}, M{})}
 }
 
 type aggregator struct {
 	name          string
-	storeFactory  StoreFactory
+	adapter       store.Adapter
 	serviceSchema moleculer.ServiceSchema
 
 	logger        *log.Entry
@@ -61,14 +61,25 @@ func (a *aggregator) settings() map[string]interface{} {
 
 // createServiceSchema create the aggregate service schema.
 func (a *aggregator) createServiceSchema() {
-	adapter := a.storeFactory.Create(a.name, a.fields(), a.settings())
 	a.serviceSchema = moleculer.ServiceSchema{
 		Name:   a.name,
-		Mixins: []moleculer.Mixin{store.Mixin(adapter)},
+		Mixins: []moleculer.Mixin{store.Mixin(a.adapter)},
 		Actions: []moleculer.Action{
 			{
 				Name:    "snapshot",
 				Handler: a.snapshotAction,
+			},
+			{
+				Name:    "restore",
+				Handler: a.restoreAction,
+			},
+			{
+				Name:    "restoreAndReplay",
+				Handler: a.restoreAndReplayAction,
+			},
+			{
+				Name:    "replay",
+				Handler: a.replayAction,
 			},
 		},
 	}
@@ -138,7 +149,7 @@ func (a *aggregator) Snapshot(eventStore EventStorer) Aggregator {
 	return a
 }
 
-//Proposal
+//snapshotAction - snapshot the aggregate
 // - pause event pumps -> pause aggregate changes :)
 //  - create a snapshot event -> new events will pile up after this point! = While Write is enabled.
 
@@ -150,14 +161,9 @@ func (a *aggregator) Snapshot(eventStore EventStorer) Aggregator {
 //  - if backup fails the event is marked as failed and is ignored when trying to restore events.
 //  - Rationale:
 //  ---> Since you created an event about the start of the snapshot at the same moment you paused the pump. this event should point to the backup file. so it can be used when restoring the snapshot.
-
-//snapshotAction - snapshot the aggregate
 func (a *aggregator) snapshotAction(context moleculer.Context, params moleculer.Payload) interface{} {
 	if a.eventStore == nil {
 		return errors.New("snapshot not configured for this aggregate. eventStore is nil")
-	}
-	if a.storeFactory == nil {
-		return errors.New("this aggregate has no data store configuration")
 	}
 
 	//snapshot the aggregate
@@ -169,7 +175,7 @@ func (a *aggregator) snapshotAction(context moleculer.Context, params moleculer.
 		// error creating the snapshot event
 		return errors.New("aggregate.snapshot action failed. We could not create the snapshot event. Error: " + err.Error())
 	}
-	err = a.storeFactory.Backup(snapshotID)
+	err = a.backup(snapshotID)
 	if err != nil {
 		a.eventStore.FailSnapshot(snapshotID)
 		// error creating the backup
@@ -181,4 +187,35 @@ func (a *aggregator) snapshotAction(context moleculer.Context, params moleculer.
 		return errors.New("aggregate.snapshot action failed. We could not create the snapshot complete event. Error: " + err.Error())
 	}
 	return snapshotID
+}
+
+func (a *aggregator) backup(snapshotID string) (err error) {
+
+	return err
+}
+
+// restore a backup from a certain snapshot point.
+func (a *aggregator) restoreAction(context moleculer.Context, params moleculer.Payload) interface{} {
+	// snapshotID := params.Get("snapshotID").String()
+
+	// err := a.eventStore.StopPump()
+	// if err != nil {
+	// 	// error stoping event pump
+	// 	return errors.New("aggregate.restore action failed. We could not create stop the event pump. Error: " + err.Error())
+	// }
+	// err = a.storeFactory.RestoreBackup(snapshotID)
+	// if err != nil {
+	// 	// error creating the backup
+	// 	return errors.New("aggregate.restore action failed. We could not restore the aggregate backup. Error: " + err.Error())
+	// }
+
+	return nil
+}
+
+func (a *aggregator) restoreAndReplayAction(context moleculer.Context, params moleculer.Payload) interface{} {
+	return nil
+}
+
+func (a *aggregator) replayAction(context moleculer.Context, params moleculer.Payload) interface{} {
+	return nil
 }

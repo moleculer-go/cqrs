@@ -1,8 +1,6 @@
 package property
 
 import (
-	"errors"
-
 	"github.com/moleculer-go/cqrs"
 	"github.com/moleculer-go/moleculer"
 	"github.com/moleculer-go/moleculer/payload"
@@ -21,38 +19,40 @@ func resolveSQLiteURI(settings map[string]interface{}) string {
 
 // sqliteStore used by the CQRS mixin to create
 // the data store adapter for its models and backup on snapshots.
-type sqliteStore struct {
-	fields   map[string]interface{}
-	settings map[string]interface{}
-}
+// type sqliteStore struct {
+// 	fields   map[string]interface{}
+// 	settings map[string]interface{}
+// }
 
-func (s *sqliteStore) Create(name string, cqrsFields, settings map[string]interface{}) store.Adapter {
-	s.settings = settings
-	return &sqlite.Adapter{
-		URI:     resolveSQLiteURI(settings),
-		Table:   name,
-		Columns: cqrs.FieldsToSQLiteColumns(s.fields, cqrsFields),
+func storeFactory(fields ...map[string]interface{}) cqrs.StoreFactory {
+	return func(name string, cqrsFields, settings map[string]interface{}) store.Adapter {
+		fields = append(fields, cqrsFields)
+		return &sqlite.Adapter{
+			URI:     resolveSQLiteURI(settings),
+			Table:   name,
+			Columns: cqrs.FieldsToSQLiteColumns(fields...),
+		}
 	}
 }
 
-func (s *sqliteStore) Backup(name string) error {
-	backupFolder, ok := s.settings["backupFolder"]
-	if !ok {
-		return errors.New("no backup folder setup! missing backupFolder from service settings! ")
-	}
-	return sqlite.FileCopyBackup(name, resolveSQLiteURI(s.settings), backupFolder.(string))
-}
+// func (s *sqliteStore) Backup(name string) error {
+// 	backupFolder, ok := s.settings["backupFolder"]
+// 	if !ok {
+// 		return errors.New("no backup folder setup! missing backupFolder from service settings! ")
+// 	}
+// 	return sqlite.FileCopyBackup(name, resolveSQLiteURI(s.settings), backupFolder.(string))
+// }
 
-var events = cqrs.EventStore("propertyEventStore", &sqliteStore{})
+var events = cqrs.EventStore("propertyEventStore", storeFactory())
 
-var propertySummaryAg = cqrs.Aggregate("propertySummaryAggregate", &sqliteStore{fields: map[string]interface{}{
+var propertySummaryAg = cqrs.Aggregate("propertySummaryAggregate", storeFactory(map[string]interface{}{
 	"countryCode": "string",
 	"total":       "integer",
 	"beachCity":   "integer",
 	"mountain":    "integer",
-}}).Snapshot(events)
+})).Snapshot(events)
 
-var propertiesAg = cqrs.Aggregate("propertyAggregate", &sqliteStore{fields: map[string]interface{}{
+var propertiesAg = cqrs.Aggregate("propertyAggregate", storeFactory(map[string]interface{}{
 	"name":        "string",
 	"title":       "string",
 	"description": "string",
@@ -77,7 +77,7 @@ var propertiesAg = cqrs.Aggregate("propertyAggregate", &sqliteStore{fields: map[
 		"sourceId":  "string",
 		"sourceIds": "map",
 	},
-}}).Snapshot(events)
+})).Snapshot(events)
 
 var Service = moleculer.ServiceSchema{
 	Name:   "property",
