@@ -10,13 +10,16 @@ import (
 )
 
 // Aggregate returns an aggregator which contain functions such as (Create, )
-func Aggregate(name string, storeFactory StoreFactory, backup BackupStrategy) Aggregator {
-	return &aggregator{name: name, adapter: storeFactory(name, M{}, M{}), backup: backup}
+func Aggregate(name string, storeFactory StoreFactory, snapshotStrategy SnapshotStrategy) Aggregator {
+	backup, restore := snapshotStrategy(name)
+	return &aggregator{name: name, storeFactory: storeFactory, backup: backup, restore: restore}
 }
 
 type aggregator struct {
-	name          string
-	adapter       store.Adapter
+	name string
+
+	storeFactory  StoreFactory
+	store         store.Adapter
 	serviceSchema moleculer.ServiceSchema
 
 	logger        *log.Entry
@@ -25,7 +28,8 @@ type aggregator struct {
 
 	eventStore EventStorer
 
-	backup BackupStrategy
+	backup  BackupStrategy
+	restore RestoreStrategy
 }
 
 // Mixin return the mixin schema for CQRS plugin
@@ -63,9 +67,10 @@ func (a *aggregator) settings() map[string]interface{} {
 
 // createServiceSchema create the aggregate service schema.
 func (a *aggregator) createServiceSchema() {
+	a.store = a.storeFactory(a.name, a.fields(), a.settings())
 	a.serviceSchema = moleculer.ServiceSchema{
 		Name:   a.name,
-		Mixins: []moleculer.Mixin{store.Mixin(a.adapter)},
+		Mixins: []moleculer.Mixin{store.Mixin(a.store)},
 		Actions: []moleculer.Action{
 			{
 				Name:    "snapshot",
@@ -138,7 +143,7 @@ func (a *aggregator) Update(transform Transformer) moleculer.EventHandler {
 	}
 }
 
-// fields return a map with fields that this event store needs in the adapter
+// fields return a map with fields that this event store needs in the store
 func (a *aggregator) fields() map[string]interface{} {
 	return map[string]interface{}{
 		"eventId": "integer",
@@ -177,7 +182,7 @@ func (a *aggregator) snapshotAction(context moleculer.Context, params moleculer.
 		// error creating the snapshot event
 		return errors.New("aggregate.snapshot action failed. We could not create the snapshot event. Error: " + err.Error())
 	}
-	err = a.backup(snapshotID, a.settings)
+	err = a.backup(snapshotID)
 	if err != nil {
 		a.eventStore.FailSnapshot(snapshotID)
 		// error creating the backup
@@ -191,22 +196,22 @@ func (a *aggregator) snapshotAction(context moleculer.Context, params moleculer.
 	return snapshotID
 }
 
-// restore a backup from a certain snapshot point.
+// restore a snapshot backup
 func (a *aggregator) restoreAction(context moleculer.Context, params moleculer.Payload) interface{} {
-	// snapshotID := params.Get("snapshotID").String()
+	snapshotID := params.Get("snapshotID").String()
 
-	// err := a.eventStore.StopPump()
-	// if err != nil {
-	// 	// error stoping event pump
-	// 	return errors.New("aggregate.restore action failed. We could not create stop the event pump. Error: " + err.Error())
-	// }
-	// err = a.storeFactory.RestoreBackup(snapshotID)
-	// if err != nil {
-	// 	// error creating the backup
-	// 	return errors.New("aggregate.restore action failed. We could not restore the aggregate backup. Error: " + err.Error())
-	// }
-
-	return nil
+	err := a.eventStore.PauseEvents()
+	if err != nil {
+		// error stoping event pump
+		return errors.New("aggregate.restore action failed. We could not create stop the event pump. Error: " + err.Error())
+	}
+	err = a.restore(snapshotID)
+	if err != nil {
+		// error creating the backup
+		return errors.New("aggregate.restore action failed. We could not restore the aggregate backup. Error: " + err.Error())
+	}
+	a.eventStore.StartEvents()
+	return snapshotID
 }
 
 func (a *aggregator) restoreAndReplayAction(context moleculer.Context, params moleculer.Payload) interface{} {
@@ -215,11 +220,4 @@ func (a *aggregator) restoreAndReplayAction(context moleculer.Context, params mo
 
 func (a *aggregator) replayAction(context moleculer.Context, params moleculer.Payload) interface{} {
 	return nil
-}
-
-//JsonDumpBackup creates a JSON dump of the aggregate and
-// saves to the backup folder specified in the service settings.
-func JsonDumpBackup(snapshotID string, settings map[string]interface{}) (err error) {
-	
-	return err
 }

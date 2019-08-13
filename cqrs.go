@@ -16,9 +16,22 @@ type EventStorer interface {
 	StartSnapshot(snapshotName string, aggregateMetadata map[string]interface{}) error
 	CompleteSnapshot(snapshotName string) error
 	FailSnapshot(snapshotName string) error
+
+	PauseEvents() error
+	StartEvents()
 }
 
-type BackupStrategy func(snapshotID string, settings map[string]interface{}) error
+//BackupStrategy function that backups the aggregate data
+type BackupStrategy func(snapshotID string) error
+
+//RestoreStrategy function that restores the aggregate data based on the snapshotID
+type RestoreStrategy func(snapshotID string) error
+
+//SnapshotStrategy factory function to create a snapshot strategy.
+type SnapshotStrategy func(aggregateName string) (BackupStrategy, RestoreStrategy)
+
+//type AggregateRestore func(aggregateName string) RestoreStrategy
+
 type StoreFactory func(name string, cqrsFields, settings map[string]interface{}) store.Adapter
 
 type Aggregator interface {

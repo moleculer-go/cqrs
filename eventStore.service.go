@@ -244,37 +244,50 @@ func (e *eventStore) PersistEvent(eventName string, extraParams ...map[string]in
 	}
 }
 
-func (e *eventStore) stopPump() {
+// 1.B) Alternative design: Instead of pausing/stoping the event pump, which can be related to many aggregates.. we should only pause the aggregate events.
+//		the aggregate must pass on a filter criteria.. so the event pump can pause just the events that matches the filter and continue to serve other aggregates.
+//		there could be aggreagates that share the same events, and there fore snapshot on aggreagte A can impact aggreagtee B if shares the same events, but the impact
+// 		stops there.
+
+// PauseEvents current implementatio pause event whole pump.
+// 		change proposed is to have a filter, so we can pause only for certain events.
+func (e *eventStore) PauseEvents() error {
 	e.stopping = true
 	for {
 		if e.dispatchEventsStopped {
 			break
 		}
 	}
+	return nil
+}
+
+//StartEvents start event pump.
+func (e *eventStore) StartEvents() {
+	e.stopping = false
+	e.logger.Debug("starting event pump!")
+	go e.dispatchEvents()
 }
 
 // StartSnapshot starts a snapshot:
 // 1) Pause event pump , so no morechanges to aggreagates will be done.
+// 1.B) Alternative design: Instead of pausing/stoping the event pump, which can be related to many aggregates.. we should only pause the aggregate events.
+//		the aggregate must pass on a filter criteria.. so the event pump can pause just the events that matches the filter and continue to serve other aggregates.
+//		there could be aggreagates that share the same events, and there fore snapshot on aggreagte A can impact aggreagtee B if shares the same events, but the impact
+// 		stops there.
 // 2) Create an event to record the snapshot, so it can be replayed from this point.
 // Error Handling:
 //  In case snapshotEvent fails, it restarts the pump and returns the error.
 func (e *eventStore) StartSnapshot(snapshotName string, aggregateMetadata map[string]interface{}) error {
 	e.logger.Debug("StartSnapshot snapshotName: ", snapshotName)
 	//pause event pumps -> pause aggregate changes :)
-	e.stopPump()
+	e.PauseEvents()
 
 	err := e.snapshotEvent(snapshotName, aggregateMetadata)
 	if err != nil {
-		e.startPump()
+		e.StartEvents()
 		return err
 	}
 	return nil
-}
-
-func (e *eventStore) startPump() {
-	e.stopping = false
-	e.logger.Debug("starting event pump!")
-	go e.dispatchEvents()
 }
 
 // snapshotEvent create an snapshot event in the event store and stores the aggregate metadata as payload.
@@ -309,7 +322,7 @@ func (e *eventStore) CompleteSnapshot(snapshotID string) error {
 	if events.Len() < 1 {
 		return errors.New("No snapshot found with id: " + snapshotID)
 	}
-	e.startPump()
+	e.StartEvents()
 	return nil
 }
 
@@ -326,7 +339,7 @@ func (e *eventStore) FailSnapshot(snapshotID string) error {
 	if events.Len() < 1 {
 		return errors.New("No snapshot found with id: " + snapshotID)
 	}
-	e.startPump()
+	e.StartEvents()
 	return nil
 }
 

@@ -1,12 +1,8 @@
 package cqrs
 
 import (
-	"errors"
 	"fmt"
-	"io/ioutil"
-	"log"
 	"os"
-	"path/filepath"
 	"strconv"
 	"time"
 
@@ -21,21 +17,21 @@ import (
 	. "github.com/onsi/gomega"
 )
 
-type storeFactoryMock struct {
-	backup func(name string) (err error)
-	create func(name string, cqrsFields, settings map[string]interface{}) store.Adapter
-}
+// type storeFactoryMock struct {
+// 	backup func(name string) (err error)
+// 	create func(name string, cqrsFields, settings map[string]interface{}) store.Adapter
+// }
 
-func (f *storeFactoryMock) Backup(name string) (err error) {
-	if f.backup == nil {
-		return errors.New("backup not setup")
-	}
-	return f.backup(name)
-}
+// func (f *storeFactoryMock) Backup(name string) (err error) {
+// 	if f.backup == nil {
+// 		return errors.New("backup not setup")
+// 	}
+// 	return f.backup(name)
+// }
 
-func (f *storeFactoryMock) Create(name string, cqrsFields, settings map[string]interface{}) store.Adapter {
-	return f.create(name, cqrsFields, settings)
-}
+// func (f *storeFactoryMock) Create(name string, cqrsFields, settings map[string]interface{}) store.Adapter {
+// 	return f.create(name, cqrsFields, settings)
+// }
 
 func sqliteMemory(fields ...map[string]interface{}) func(name string, cqrsFields, settings map[string]interface{}) store.Adapter {
 	return func(name string, cqrsFields, settings map[string]interface{}) store.Adapter {
@@ -48,24 +44,24 @@ func sqliteMemory(fields ...map[string]interface{}) func(name string, cqrsFields
 	}
 }
 
-func sqliteBackup(dbfile, backupFolder string) func(string) error {
-	return func(name string) error {
-		return sqlite.FileCopyBackup(name, "file:"+dbfile, backupFolder)
-	}
-}
+// func sqliteBackup(dbfile, backupFolder string) func(string) error {
+// 	return func(name string) error {
+// 		return sqlite.FileCopyBackup(name, "file:"+dbfile, backupFolder)
+// 	}
+// }
 
-func sqliteFile(fullPath string, fields ...map[string]interface{}) func(name string, cqrsFields, settings map[string]interface{}) store.Adapter {
+func sqliteFile(baseFolder string, fields ...map[string]interface{}) func(name string, cqrsFields, settings map[string]interface{}) store.Adapter {
 	return func(name string, cqrsFields, settings map[string]interface{}) store.Adapter {
 		allFields := append(fields, cqrsFields)
 		//make sure folder exists
-		folder := filepath.Dir(fullPath)
+		folder := baseFolder + "/" + name
 		err := os.MkdirAll(folder, os.ModePerm)
 		if err != nil {
 			fmt.Println("### Error trying to create sqlite db folder: ", folder, " Error: ", err)
 		}
-		fmt.Println("### SQLIte Folder created ! --> ", folder)
+		//fmt.Println("### SQLite Folder created ! --> ", folder)
 		return &sqlite.Adapter{
-			URI:     "file:" + fullPath,
+			URI:     "file:" + folder + "/store.db",
 			Table:   name,
 			Columns: FieldsToSQLiteColumns(allFields...),
 		}
@@ -73,12 +69,14 @@ func sqliteFile(fullPath string, fields ...map[string]interface{}) func(name str
 }
 
 var _ = Describe("CQRS Pluggin", func() {
-	logLevel := "error"
+	logLevel := "fatal"
 
 	Describe("Event Store", func() {
 
 		createBroker := func(dispatchBatchSize int) *broker.ServiceBroker {
-			eventStore := EventStore("propertyEventStore", &storeFactoryMock{create: sqliteMemory()})
+			eventStore := EventStore(
+				"propertyEventStore",
+				sqliteMemory())
 			service := moleculer.ServiceSchema{
 				Name:   "property",
 				Mixins: []moleculer.Mixin{eventStore.Mixin()},
@@ -206,9 +204,12 @@ var _ = Describe("CQRS Pluggin", func() {
 		}, 4)
 
 		It("should store extra fields in the event", func(done Done) {
-			eventStore := EventStore("userEventStore", &storeFactoryMock{create: sqliteMemory()}, map[string]interface{}{
-				"tag": "string",
-			})
+			eventStore := EventStore(
+				"userEventStore",
+				sqliteMemory(),
+				map[string]interface{}{
+					"tag": "string",
+				})
 			service := moleculer.ServiceSchema{
 				Name:   "user",
 				Mixins: []moleculer.Mixin{eventStore.Mixin()},
@@ -257,19 +258,22 @@ var _ = Describe("CQRS Pluggin", func() {
 			return bkr
 		}
 		createBroker := func(dispatchBatchSize int) (*broker.ServiceBroker, EventStorer) {
-			eventStore := EventStore("propertyEventStore", &storeFactoryMock{create: sqliteMemory()})
+			eventStore := EventStore("propertyEventStore", sqliteMemory())
 			return createBrokerWithEventStore(
 				dispatchBatchSize,
 				eventStore,
 			), eventStore
 		}
 
-		notifications := Aggregate("notificationsAggregate", &storeFactoryMock{create: sqliteMemory(map[string]interface{}{
-			"eventId":      "integer",
-			"smsContent":   "string",
-			"pushContent":  "string",
-			"emailContent": "string",
-		})})
+		notifications := Aggregate(
+			"notificationsAggregate",
+			sqliteMemory(map[string]interface{}{
+				"eventId":      "integer",
+				"smsContent":   "string",
+				"pushContent":  "string",
+				"emailContent": "string",
+			}),
+			NoSnapshot)
 
 		//transform the incoming property.created event into X property notification records
 		createNotificationsService := func(notifications Aggregator, records int, notificationsCreatedChan chan []moleculer.Payload) moleculer.ServiceSchema {
@@ -445,52 +449,27 @@ var _ = Describe("CQRS Pluggin", func() {
 			}
 
 			result := <-bkr.Call("notificationsAggregate.snapshot", M{})
-			Expect(result.Error()).ShouldNot(Succeed())
-			Expect(result.Error().Error()).Should(Equal("aggregate.snapshot action failed. We could not backup the aggregate. Error: backup not setup"))
+			fmt.Println(result)
+			Expect(result.Error()).ShouldNot(BeNil())
+			Expect(result.Error().Error()).Should(Equal("aggregate.snapshot action failed. We could not backup the aggregate. Error: no backup strategy"))
 
 			bkr.Stop()
 			close(done)
-		}, 4)
+		}, 5)
 
 		Context("File database with snapshots", func() {
-			cacheDir, _ := os.UserCacheDir()
-			dbFolder := cacheDir + "/temp_test_dbs/snapshot"
-			dbFile := dbFolder + "/database.db"
-			bkpFolder := cacheDir + "/temp_test_dbs/bkps"
-			factoryMock := &storeFactoryMock{create: sqliteFile(dbFile), backup: sqliteBackup(dbFile, bkpFolder)}
+			cacheFolder, _ := os.UserCacheDir()
+			baseFolder := cacheFolder + "/cqrs_test_dbs"
+			dbAggregatesFolder := baseFolder + "/aggregates"
+			dbEventStoreFolder := baseFolder + "/eventStores"
+			snapshotFolder := baseFolder + "/snapshots"
 
 			BeforeEach(func() {
-				err := os.RemoveAll(filepath.Dir(dbFile))
+				err := os.RemoveAll(baseFolder)
 				if err != nil {
-					fmt.Println("** Error removing database folder: ", filepath.Dir(dbFile), " Error: ", err)
-				}
-				err = os.RemoveAll(bkpFolder)
-				if err != nil {
-					fmt.Println("** Error removing backup folder: ", bkpFolder, " Error: ", err)
+					fmt.Println("** Error removing test database folder: ", baseFolder, " Error: ", err)
 				}
 			})
-
-			countContents := func(folder string) int {
-				files, err := ioutil.ReadDir(folder)
-				if err != nil {
-					log.Fatal(err)
-				}
-				return len(files)
-			}
-
-			bkpContents := func(path string) string {
-				directory, _ := os.Open(path)
-				objects, err := directory.Readdir(-1)
-				if err != nil {
-					log.Fatal(err)
-				}
-				for _, obj := range objects {
-					if obj.IsDir() {
-						return path + "/" + obj.Name()
-					}
-				}
-				return ""
-			}
 
 			//wait for x (size) records  from the count action
 			waitForRecords := func(bkr *broker.ServiceBroker, action string, size int) {
@@ -532,22 +511,31 @@ var _ = Describe("CQRS Pluggin", func() {
 				}
 			}
 
-			It("should snapshot the current aggregate data - backup data and create event to record snapshot", func(done Done) {
-				eventStore := EventStore("propertyEventStore", factoryMock)
-				notifications := Aggregate("notificationsAggregate", &storeFactoryMock{create: sqliteFile(dbFile, map[string]interface{}{
-					"eventId":      "integer",
-					"smsContent":   "string",
-					"pushContent":  "string",
-					"emailContent": "string",
-				}), backup: sqliteBackup(dbFile, bkpFolder)})
+			setup := func() *broker.ServiceBroker {
+				eventStore := EventStore("propertyEventStore", sqliteFile(dbEventStoreFolder))
+				notifications := Aggregate(
+					"notificationsAggregate",
+
+					sqliteFile(dbAggregatesFolder, map[string]interface{}{
+						"eventId":      "integer",
+						"smsContent":   "string",
+						"pushContent":  "string",
+						"emailContent": "string",
+					}),
+					FileCopyBackup(dbAggregatesFolder, snapshotFolder),
+				)
 				notifications.Snapshot(eventStore)
 				notificationsCreated := make(chan []moleculer.Payload, 1)
 				service := createNotificationsService(notifications, 5, notificationsCreated)
 				bkr := createBrokerWithEventStore(1, eventStore)
 				bkr.Publish(service)
 				bkr.Start()
-
 				populateAggregate(bkr, notificationsCreated)
+				return bkr
+			}
+
+			It("should snapshot the current aggregate data - backup data and create event to record snapshot", func(done Done) {
+				bkr := setup()
 
 				snapshotID := <-bkr.Call("notificationsAggregate.snapshot", M{})
 				Expect(snapshotID.Error()).Should(BeNil())
@@ -555,9 +543,12 @@ var _ = Describe("CQRS Pluggin", func() {
 
 				waitForSnapShotEvent(bkr)
 
-				//check bkp file created
-				Expect(countContents(bkpFolder)).Should(Equal(1))
-				Expect(countContents(bkpContents(bkpFolder))).Should(Equal(3))
+				//check snapshot folder was created
+				Expect(snapshotFolder + "/" + snapshotID.String()).Should(BeADirectory())
+				Expect(snapshotFolder + "/" + snapshotID.String() + "/notificationsAggregate").Should(BeADirectory())
+				Expect(snapshotFolder + "/" + snapshotID.String() + "/notificationsAggregate/store.db").Should(BeAnExistingFile())
+				Expect(snapshotFolder + "/" + snapshotID.String() + "/notificationsAggregate/store.db-shm").Should(BeAnExistingFile())
+				Expect(snapshotFolder + "/" + snapshotID.String() + "/notificationsAggregate/store.db-wal").Should(BeAnExistingFile())
 
 				//check event pump is back
 				evt := <-bkr.Call("property.create", map[string]string{
@@ -574,23 +565,8 @@ var _ = Describe("CQRS Pluggin", func() {
 				close(done)
 			}, 3)
 
-			FIt("should restore a snapshot and start processing from point of last restore", func(done Done) {
-				eventStore := EventStore("propertyEventStore", factoryMock)
-				notifications := Aggregate("notificationsAggregate", &storeFactoryMock{create: sqliteFile(dbFile, map[string]interface{}{
-					"eventId":      "integer",
-					"smsContent":   "string",
-					"pushContent":  "string",
-					"emailContent": "string",
-				}), backup: sqliteBackup(dbFile, bkpFolder)})
-				notifications.Snapshot(eventStore)
-
-				notificationsCreated := make(chan []moleculer.Payload, 1)
-				service := createNotificationsService(notifications, 5, notificationsCreated)
-				bkr := createBrokerWithEventStore(1, eventStore)
-				bkr.Publish(service)
-				bkr.Start()
-
-				populateAggregate(bkr, notificationsCreated)
+			It("should restore a snapshot", func(done Done) {
+				bkr := setup()
 
 				snapshotID := <-bkr.Call("notificationsAggregate.snapshot", M{})
 				Expect(snapshotID.Error()).Should(BeNil())
@@ -598,9 +574,9 @@ var _ = Describe("CQRS Pluggin", func() {
 
 				waitForSnapShotEvent(bkr)
 
-				//Creates a new db
+				//clean up all notificationsAggregate db
 				bkr.Stop()
-				Expect(os.RemoveAll(dbFolder)).Should(Succeed())
+				Expect(os.RemoveAll(dbAggregatesFolder + "/notificationsAggregate")).Should(Succeed())
 				bkr.Start()
 
 				//aggregate should be empty
@@ -608,7 +584,11 @@ var _ = Describe("CQRS Pluggin", func() {
 				Expect(notificationsCount.Error()).Should(BeNil())
 				Expect(notificationsCount.Int()).Should(Equal(0))
 
+				//restore snapshot
 				<-bkr.Call("notificationsAggregate.restore", M{"snapshotID": snapshotID})
+
+				//aggregate should have 50 records after restore
+				waitForRecords(bkr, "notificationsAggregate.count", 50)
 
 				close(done)
 			}, 3)
