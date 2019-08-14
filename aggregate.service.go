@@ -218,6 +218,12 @@ func (a *aggregator) restoreAndReplayAction(context moleculer.Context, params mo
 	return nil
 }
 
+//may this should not be an aggregate responsability.. the event store must expose a replay API.
+//replayAction replays the events
 func (a *aggregator) replayAction(context moleculer.Context, params moleculer.Payload) interface{} {
+	// snapshotID := params.Get("snapshotID").String()
+	// startDateTime := params.Get("startDateTime").Time()
+	// consumer := params.Get("consumer").String()
+
 	return nil
 }
