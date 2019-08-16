@@ -19,6 +19,8 @@ type EventStorer interface {
 
 	PauseEvents() error
 	StartEvents()
+
+	Name() string
 }
 
 //BackupStrategy function that backups the aggregate data
@@ -34,18 +36,22 @@ type SnapshotStrategy func(aggregateName string) (BackupStrategy, RestoreStrateg
 
 type StoreFactory func(name string, cqrsFields, settings map[string]interface{}) store.Adapter
 
+type ActionMaping interface {
+	From(eventName string) moleculer.Event
+}
+
 type Aggregator interface {
 	Mixin() moleculer.Mixin
 	// Create creates an aggregate record. Uses transformer to transfor the event into the aggregate record.
 	// emits:
 	// property.created.successfully at the end of the process or
 	// property.created.error when there is an issue/error transformring the event
-	Create(Transformer) moleculer.EventHandler
-	CreateMany(ManyTransformer) moleculer.EventHandler
+	Create(action string) ActionMaping
+	CreateMany(action string) ActionMaping
 	// Update changes an existing aggregate record
 	// if the result of the transformation has an id,
 	// or creates a new aggreagate record if no id is present.
-	Update(Transformer) moleculer.EventHandler
+	Update(action string) ActionMaping
 
 	// Snapshot configure the snapshot behaviour of the aggregate
 	Snapshot(EventStorer) Aggregator

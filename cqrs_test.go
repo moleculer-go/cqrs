@@ -278,7 +278,7 @@ var _ = Describe("CQRS Pluggin", func() {
 		//transform the incoming property.created event into X property notification records
 		createNotificationsService := func(notifications Aggregator, records int, notificationsCreatedChan chan []moleculer.Payload) moleculer.ServiceSchema {
 			//createNotifications transforms the 'property.created' event and
-			createNotifications := func(context moleculer.Context, event moleculer.Payload) []moleculer.Payload {
+			createNotifications := func(context moleculer.Context, event moleculer.Payload) interface{} {
 				property := event.Get("payload")
 				name := "John"
 				mobileMsg := "Hi " + name + ", Property " + property.Get("name").String() + " with " + property.Get("bedrooms").String() + " was added to your account!"
@@ -300,9 +300,12 @@ var _ = Describe("CQRS Pluggin", func() {
 				Name:   "propertyNotifier",
 				Mixins: []moleculer.Mixin{notifications.Mixin()},
 				Events: []moleculer.Event{
+					notifications.CreateMany("propertyNotifier.createNotifications").From("property.created"),
+				},
+				Actions: []moleculer.Action{
 					{
-						Name:    "property.created",
-						Handler: notifications.CreateMany(createNotifications),
+						Name:    "createNotifications",
+						Handler: createNotifications,
 					},
 				},
 			}
@@ -312,7 +315,7 @@ var _ = Describe("CQRS Pluggin", func() {
 			bkr, _ := createBroker(1)
 			notificationCreated := make(chan moleculer.Payload, 1)
 			//transform the incoming property.created event into a property notification aggregate record.
-			transformPropertyCreated := func(context moleculer.Context, event moleculer.Payload) moleculer.Payload {
+			transformPropertyNotification := func(context moleculer.Context, event moleculer.Payload) interface{} {
 				property := event.Get("payload")
 				name := "John"
 				mobileMsg := "Hi " + name + ", Property " + property.Get("name").String() + " with " + property.Get("bedrooms").String() + " was added to your account!"
@@ -329,9 +332,16 @@ var _ = Describe("CQRS Pluggin", func() {
 				Name:   "propertyNotifier",
 				Mixins: []moleculer.Mixin{notifications.Mixin()},
 				Events: []moleculer.Event{
+					notifications.Create("propertyNotifier.transform").From("property.created"),
+					// {
+					// 	Name:    "property.created",
+					// 	Handler: notifications.Create("").From("property.created"),
+					// },
+				},
+				Actions: []moleculer.Action{
 					{
-						Name:    "property.created",
-						Handler: notifications.Create(transformPropertyCreated),
+						Name:    "transform",
+						Handler: transformPropertyNotification,
 					},
 				},
 			})

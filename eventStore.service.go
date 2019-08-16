@@ -64,8 +64,6 @@ func (e *eventStore) Mixin() moleculer.Mixin {
 				Handler: e.startDispatch,
 			},
 			{
-				//TODO make actions prefixed with $ available only in then local broker.
-				//so they are never published to other brokers.
 				Name:    "$stopDispatch",
 				Handler: e.stopDispatch,
 			},
@@ -96,6 +94,10 @@ func (e *eventStore) storeServiceStopped(c moleculer.BrokerContext, svc molecule
 }
 
 type M map[string]interface{}
+
+func (e *eventStore) Name() string {
+	return e.name
+}
 
 //fetchNextEvent return the next event to be processed.
 // blocks until there is a event available.

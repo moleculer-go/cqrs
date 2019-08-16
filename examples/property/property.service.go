@@ -90,7 +90,7 @@ var Service = moleculer.ServiceSchema{
 	},
 	Events: []moleculer.Event{
 		{
-			//property.created is fired by the persistent event store.
+			//property.created is fired by the event pump.
 			Name: "property.created",
 			Handler: emitAll(
 				propertiesAg.Create(transformProperty),
