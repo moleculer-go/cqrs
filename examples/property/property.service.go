@@ -28,17 +28,9 @@ func storeFactory(fields ...map[string]interface{}) cqrs.StoreFactory {
 	}
 }
 
-// func (s *sqliteStore) Backup(name string) error {
-// 	backupFolder, ok := s.settings["backupFolder"]
-// 	if !ok {
-// 		return errors.New("no backup folder setup! missing backupFolder from service settings! ")
-// 	}
-// 	return sqlite.FileCopyBackup(name, resolveSQLiteURI(s.settings), backupFolder.(string))
-// }
-
 var events = cqrs.EventStore("propertyEventStore", storeFactory())
 
-var propertySummaryAg = cqrs.Aggregate(
+var summaryAggregate = cqrs.Aggregate(
 	"propertySummaryAggregate",
 	storeFactory(map[string]interface{}{
 		"countryCode": "string",
@@ -46,10 +38,10 @@ var propertySummaryAg = cqrs.Aggregate(
 		"beachCity":   "integer",
 		"mountain":    "integer",
 	}),
-	cqrs.JsonDumpBackup,
+	cqrs.NoSnapshot,
 ).Snapshot(events)
 
-var propertiesAg = cqrs.Aggregate(
+var propertiesAggregate = cqrs.Aggregate(
 	"propertyAggregate",
 	storeFactory(map[string]interface{}{
 		"name":        "string",
@@ -77,40 +69,40 @@ var propertiesAg = cqrs.Aggregate(
 			"sourceIds": "map",
 		},
 	}),
-	cqrs.JsonDumpBackup).Snapshot(events)
+	cqrs.NoSnapshot).Snapshot(events)
 
 var Service = moleculer.ServiceSchema{
 	Name:   "property",
-	Mixins: []moleculer.Mixin{events.Mixin(), propertiesAg.Mixin(), propertySummaryAg.Mixin()},
+	Mixins: []moleculer.Mixin{events.Mixin(), propertiesAggregate.Mixin(), summaryAggregate.Mixin()},
 	Actions: []moleculer.Action{
 		{
 			Name:    "create",
 			Handler: events.PersistEvent("property.created"),
 		},
+		{
+			Name:    "transformProperty",
+			Handler: transformProperty,
+		},
+		{
+			Name:    "transformCountrySummary",
+			Handler: transformCountrySummary,
+		},
 	},
 	Events: []moleculer.Event{
-		{
-			//property.created is fired by the event pump.
-			Name: "property.created",
-			Handler: emitAll(
-				propertiesAg.Create(transformProperty),
-				propertySummaryAg.Update(transformCountrySummary),
-			),
-		},
+		propertiesAggregate.Create("property.transformProperty").From("property.created"),
+		summaryAggregate.Update("property.transformCountrySummary").From("property.created"),
 	},
 }
 
 // transformProperty transform the property created event
 // into then payload to be saved into the property aggregate
-func transformProperty(context moleculer.Context, event moleculer.Payload) moleculer.Payload {
-	property := event.Get("payload")
-	//fmt.Println("transformProperty() property: ", property)
-	return property
+func transformProperty(context moleculer.Context, event moleculer.Payload) interface{} {
+	return event.Get("payload")
 }
 
 // transformCountrySummary transform the property created event
 // into a country summary update.
-func transformCountrySummary(context moleculer.Context, event moleculer.Payload) moleculer.Payload {
+func transformCountrySummary(context moleculer.Context, event moleculer.Payload) interface{} {
 	property := event.Get("payload")
 	summary := <-context.Call("propertySummaryAggregate.find", map[string]interface{}{
 		"countryCode": property.Get("countryCode").String(),
@@ -135,7 +127,7 @@ func transformCountrySummary(context moleculer.Context, event moleculer.Payload)
 		result["mountain"] = summary.Get("mountain").Int() + 1
 	}
 	result["countryCode"] = summary.Get("countryCode").String()
-	return payload.New(result)
+	return result
 }
 
 func isBeachCity(property moleculer.Payload) bool {
@@ -147,10 +139,10 @@ func isMountain(property moleculer.Payload) bool {
 }
 
 // emitAll invoke all events.
-func emitAll(eventHandlers ...moleculer.EventHandler) moleculer.EventHandler {
+func emitAll(eventHandlers ...moleculer.Event) moleculer.EventHandler {
 	return func(context moleculer.Context, event moleculer.Payload) {
-		for _, handler := range eventHandlers {
-			handler(context, event)
+		for _, evtHandler := range eventHandlers {
+			evtHandler.Handler(context, event)
 		}
 	}
 }

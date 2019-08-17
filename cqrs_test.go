@@ -17,22 +17,6 @@ import (
 	. "github.com/onsi/gomega"
 )
 
-// type storeFactoryMock struct {
-// 	backup func(name string) (err error)
-// 	create func(name string, cqrsFields, settings map[string]interface{}) store.Adapter
-// }
-
-// func (f *storeFactoryMock) Backup(name string) (err error) {
-// 	if f.backup == nil {
-// 		return errors.New("backup not setup")
-// 	}
-// 	return f.backup(name)
-// }
-
-// func (f *storeFactoryMock) Create(name string, cqrsFields, settings map[string]interface{}) store.Adapter {
-// 	return f.create(name, cqrsFields, settings)
-// }
-
 func sqliteMemory(fields ...map[string]interface{}) func(name string, cqrsFields, settings map[string]interface{}) store.Adapter {
 	return func(name string, cqrsFields, settings map[string]interface{}) store.Adapter {
 		allFields := append(fields, cqrsFields)
@@ -43,12 +27,6 @@ func sqliteMemory(fields ...map[string]interface{}) func(name string, cqrsFields
 		}
 	}
 }
-
-// func sqliteBackup(dbfile, backupFolder string) func(string) error {
-// 	return func(name string) error {
-// 		return sqlite.FileCopyBackup(name, "file:"+dbfile, backupFolder)
-// 	}
-// }
 
 func sqliteFile(baseFolder string, fields ...map[string]interface{}) func(name string, cqrsFields, settings map[string]interface{}) store.Adapter {
 	return func(name string, cqrsFields, settings map[string]interface{}) store.Adapter {

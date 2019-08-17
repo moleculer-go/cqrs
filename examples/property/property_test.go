@@ -14,7 +14,7 @@ import (
 type M map[string]interface{}
 
 var _ = Describe("Property service", func() {
-	logLevel := "fatal"
+	logLevel := "trace"
 
 	createMultipleProperties := func(bkr *broker.ServiceBroker, size int) {
 		for index := 1; index <= size; index++ {
@@ -47,6 +47,7 @@ var _ = Describe("Property service", func() {
 			"city":        "Wanaka",
 			"countryCode": "NZ",
 		})
+		fmt.Print("## 1 - property event created!")
 
 		//check property aggregate
 		r := payload.Empty()
@@ -58,6 +59,8 @@ var _ = Describe("Property service", func() {
 				break
 			}
 		}
+		fmt.Print("## 2 - property aggregate record created!")
+
 		Expect(r.First().Get("name").String()).Should(Equal("Beach Villa"))
 		Expect(r.First().Get("bathrooms").Float()).Should(Equal(1.5))
 		Expect(r.First().Get("city").String()).Should(Equal("Wanaka"))
@@ -74,7 +77,7 @@ var _ = Describe("Property service", func() {
 				break
 			}
 		}
-		fmt.Println("result: --> ", r)
+		fmt.Println("## 3 - property summary aggregate record created! --> ", r)
 		Expect(r.First().Get("beachCity").Int()).Should(Equal(0))
 		Expect(r.First().Get("mountain").Int()).Should(Equal(1))
 		Expect(r.First().Get("total").Int()).Should(Equal(1))
@@ -82,7 +85,7 @@ var _ = Describe("Property service", func() {
 
 		bkr.Stop()
 		close(done)
-	}, 1)
+	}, 5000)
 
 	XIt("propertyAggregate.snapshot should create an snapshot :)", func(done Done) {
 		bkr := broker.New(&moleculer.Config{
