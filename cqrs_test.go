@@ -278,23 +278,26 @@ var _ = Describe("CQRS Pluggin", func() {
 		//transform the incoming property.created event into X property notification records
 		createNotificationsService := func(notifications Aggregator, records int, notificationsCreatedChan chan []moleculer.Payload) moleculer.ServiceSchema {
 			//createNotifications transforms the 'property.created' event and
-			createNotifications := func(context moleculer.Context, event moleculer.Payload) interface{} {
-				property := event.Get("payload")
-				name := "John"
-				mobileMsg := "Hi " + name + ", Property " + property.Get("name").String() + " with " + property.Get("bedrooms").String() + " was added to your account!"
-				result := []moleculer.Payload{}
-				for index := 0; index < 5; index++ {
-					notification := payload.New(M{
-						"eventId":      event.Get("id").Int(),
-						"smsContent":   "[" + strconv.Itoa(index) + "] " + mobileMsg,
-						"pushContent":  "[" + strconv.Itoa(index) + "] " + mobileMsg,
-						"emailContent": "...",
-					})
-					result = append(result, notification)
-				}
-				//Just for testing purposes.. so we can use this channel to check if notifications were generated
-				go func() { notificationsCreatedChan <- result }()
-				return result
+			createNotifications := moleculer.Action{
+				Name: "createNotifications",
+				Handler: func(context moleculer.Context, event moleculer.Payload) interface{} {
+					property := event.Get("payload")
+					name := "John"
+					mobileMsg := "Hi " + name + ", Property " + property.Get("name").String() + " with " + property.Get("bedrooms").String() + " was added to your account!"
+					result := []moleculer.Payload{}
+					for index := 0; index < 5; index++ {
+						notification := payload.New(M{
+							"eventId":      event.Get("id").Int(),
+							"smsContent":   "[" + strconv.Itoa(index) + "] " + mobileMsg,
+							"pushContent":  "[" + strconv.Itoa(index) + "] " + mobileMsg,
+							"emailContent": "...",
+						})
+						result = append(result, notification)
+					}
+					//Just for testing purposes.. so we can use this channel to check if notifications were generated
+					go func() { notificationsCreatedChan <- result }()
+					return result
+				},
 			}
 			return moleculer.ServiceSchema{
 				Name:   "propertyNotifier",
@@ -303,10 +306,7 @@ var _ = Describe("CQRS Pluggin", func() {
 					notifications.CreateMany("propertyNotifier.createNotifications").From("property.created"),
 				},
 				Actions: []moleculer.Action{
-					{
-						Name:    "createNotifications",
-						Handler: createNotifications,
-					},
+					createNotifications,
 				},
 			}
 		}

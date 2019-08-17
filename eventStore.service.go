@@ -67,6 +67,7 @@ func (e *eventStore) Mixin() moleculer.Mixin {
 				Name:    "$stopDispatch",
 				Handler: e.stopDispatch,
 			},
+			e.getSnapshotAction(),
 		},
 	}
 }
@@ -92,8 +93,6 @@ func (e *eventStore) storeServiceStopped(c moleculer.BrokerContext, svc molecule
 	e.stopping = true
 	c.Logger().Debug("eventStore storeServiceStopped() called...")
 }
-
-type M map[string]interface{}
 
 func (e *eventStore) Name() string {
 	return e.name
@@ -171,6 +170,19 @@ func (e *eventStore) startDispatch(c moleculer.Context, p moleculer.Payload) int
 		go e.dispatchEvents()
 	}
 	return nil
+}
+
+func (e *eventStore) getSnapshotAction() moleculer.Action {
+	return moleculer.Action{
+		Name: "getSnapshot",
+		Handler: func(c moleculer.Context, p moleculer.Payload) interface{} {
+			snapshotID := p.Get("snapshotID").String()
+			snapshot := <-c.Call(e.name+".findOne", M{"event": snapshotID})
+			payload := snapshot.Get("payload").ByteArray()
+			aggregateMetadata := e.serializer.BytesToPayload(&payload)
+			return snapshot.Add("aggregateMetadata", aggregateMetadata)
+		},
+	}
 }
 
 // parentServiceStarted parent service started.

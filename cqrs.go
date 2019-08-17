@@ -58,3 +58,5 @@ type Aggregator interface {
 
 	//Remove
 }
+
+type M map[string]interface{}

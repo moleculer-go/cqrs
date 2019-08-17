@@ -2,6 +2,7 @@ package cqrs
 
 import (
 	"errors"
+	"fmt"
 
 	"github.com/moleculer-go/moleculer"
 	"github.com/moleculer-go/moleculer/util"
@@ -26,11 +27,13 @@ type aggregator struct {
 	brokerContext moleculer.BrokerContext
 	parentService moleculer.ServiceSchema
 
-	eventStore EventStorer
+	eventStore     EventStorer // remove this.. use the eventStoreName.  this creates coupling between the event store and the aggregate.. it should all be through actions.
+	eventStoreName string
 
 	backup  BackupStrategy
 	restore RestoreStrategy
 
+	//transformers map events, to a list of transformation actions.
 	transformers map[string][]string
 }
 
@@ -208,7 +211,9 @@ func (a *aggregator) snapshotAction(context moleculer.Context, params moleculer.
 
 	//snapshot the aggregate
 	snapshotID := "snapshot_" + util.RandomString(12)
-	aggregateMetadata := map[string]interface{}{}
+	aggregateMetadata := map[string]interface{}{
+		"transformers": a.transformers,
+	}
 
 	err := a.eventStore.StartSnapshot(snapshotID, aggregateMetadata)
 	if err != nil {
@@ -252,10 +257,20 @@ func (a *aggregator) restoreAndReplayAction(context moleculer.Context, params mo
 //may this should not be an aggregate responsability.. the event store must expose a replay API.
 //replayAction replays the events
 func (a *aggregator) replayAction(context moleculer.Context, params moleculer.Payload) interface{} {
-	// snapshotID := params.Get("snapshotID").String()
-	// startDateTime := params.Get("startDateTime").Time()
-	// consumer := params.Get("consumer").String()
-	//events := a.EventsSince()
+	snapshot := <-context.Call(a.eventStoreName+"getSnapshot", params.Only("snapshotID"))
+	snapshotCreated := snapshot.Get("created").Time()
+	aggregateMetadata := snapshot.Get("aggregateMetadata")
+	transformers := aggregateMetadata.Get("transformers")
+
+	eventNames := []string{}
+	transformers.ForEach(func(key interface{}, value moleculer.Payload) bool {
+		eventNames = append(eventNames, key.(string))
+		return true
+	})
+
+	events := <-context.Call(a.eventStore.Name()+".list", M{"created": M{">": snapshotCreated}})
+
+	fmt.Println(events)
 
 	return nil
 }
