@@ -47,7 +47,6 @@ var _ = Describe("Property service", func() {
 			"city":        "Wanaka",
 			"countryCode": "NZ",
 		})
-		fmt.Print("## 1 - property event created!")
 
 		//check property aggregate
 		r := payload.Empty()
@@ -59,8 +58,6 @@ var _ = Describe("Property service", func() {
 				break
 			}
 		}
-		fmt.Print("## 2 - property aggregate record created!")
-
 		Expect(r.First().Get("name").String()).Should(Equal("Beach Villa"))
 		Expect(r.First().Get("bathrooms").Float()).Should(Equal(1.5))
 		Expect(r.First().Get("city").String()).Should(Equal("Wanaka"))
@@ -77,55 +74,10 @@ var _ = Describe("Property service", func() {
 				break
 			}
 		}
-		fmt.Println("## 3 - property summary aggregate record created! --> ", r)
 		Expect(r.First().Get("beachCity").Int()).Should(Equal(0))
 		Expect(r.First().Get("mountain").Int()).Should(Equal(1))
 		Expect(r.First().Get("total").Int()).Should(Equal(1))
 		Expect(r.First().Get("countryCode").String()).Should(Equal("NZ"))
-
-		bkr.Stop()
-		close(done)
-	}, 5000)
-
-	XIt("propertyAggregate.snapshot should create an snapshot :)", func(done Done) {
-		bkr := broker.New(&moleculer.Config{
-			LogLevel: logLevel,
-		})
-		bkr.Publish(Service)
-		bkr.Start()
-
-		createMultipleProperties(bkr, 10)
-
-		// snapshotName := <-bkr.Call("propertyAggregate.snapshot", M{})
-		// Expect(snapshotName.Error()).Should(Succeed())
-		// Expect(snapshotName.String()).ShouldNot(Equal(""))
-
-		//check snapshot event
-
-		//check bkp file created
-
-		//check event pump is back
-
-		bkr.Stop()
-		close(done)
-	}, 3)
-
-	XIt("propertyAggregate.restore should restore from a snapshot :)", func(done Done) {
-		bkr := broker.New(&moleculer.Config{
-			LogLevel: logLevel,
-		})
-		bkr.Publish(Service)
-		bkr.Start()
-
-		createMultipleProperties(bkr, 10)
-
-		snapshotName := <-bkr.Call("propertyAggregate.snapshot", M{})
-
-		<-bkr.Call("propertyAggregate.restore", M{"snapshot": snapshotName})
-
-		//check state of aggregates is correct
-
-		//check event pump is back
 
 		bkr.Stop()
 		close(done)
