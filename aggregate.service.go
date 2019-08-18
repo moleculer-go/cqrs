@@ -39,6 +39,7 @@ type aggregator struct {
 
 type actionMapper struct {
 	eventName    string
+	eventGroup   string
 	eventHandler moleculer.EventHandler
 	onEventName  func(eventName string)
 }
@@ -46,7 +47,8 @@ type actionMapper struct {
 func (am *actionMapper) From(eventName string) moleculer.Event {
 	am.eventName = eventName
 	return moleculer.Event{
-		Name:    eventName,
+		Name:    am.eventName,
+		Group:   am.eventGroup,
 		Handler: am.eventHandler,
 	}
 }
@@ -111,10 +113,12 @@ func (a *aggregator) createServiceSchema() {
 	}
 }
 
-// Create receives an transformer and returns a EventHandler.
+// Create receives an transformer action and returns an actionMapper that can be used
+// to link with an event handler.
 // The event handler will create an aggregate record in the aggregate store.
 func (a *aggregator) Create(transformAction string) ActionMaping {
 	return &actionMapper{
+		eventGroup: transformAction,
 		eventHandler: func(c moleculer.Context, event moleculer.Payload) {
 			eventID := event.Get("id").String()
 			record := <-c.Call(transformAction, event)
