@@ -314,7 +314,6 @@ var _ = Describe("CQRS Pluggin", func() {
 				Name:   "propertyNotifier",
 				Mixins: []moleculer.Mixin{notifications.Mixin()},
 				Events: []moleculer.Event{
-					//notifications.Create("propertyNotifier.transform").From("property.created"),
 					notifications.On("property.created").Create("propertyNotifier.createNotification"),
 				},
 				Actions: []moleculer.Action{

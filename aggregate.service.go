@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/moleculer-go/moleculer"
+	"github.com/moleculer-go/moleculer/payload"
 	"github.com/moleculer-go/moleculer/util"
 	"github.com/moleculer-go/store"
 	log "github.com/sirupsen/logrus"
@@ -272,7 +273,18 @@ func (a *aggregator) restoreAndReplayAction(context moleculer.Context, params mo
 //may this should not be an aggregate responsability.. the event store must expose a replay API.
 //replayAction replays the events
 func (a *aggregator) replayAction(context moleculer.Context, params moleculer.Payload) interface{} {
-	snapshot := <-context.Call(a.eventStoreName+"getSnapshot", params.Only("snapshotID"))
+
+	a.eventsSince(context, params.Get("snapshotID").String(), func(){
+
+	})
+	fmt.Println(events)
+
+	return nil
+}
+
+//eventsSince return all events since snapshot
+func (a *aggregator) eventsSince(context moleculer.Context, snapshotID string) moleculer.Payload {
+	snapshot := <-context.Call(a.eventStoreName+"getSnapshot", payload.Empty().Add("snapshotID", snapshotID))
 	snapshotCreated := snapshot.Get("created").Time()
 	aggregateMetadata := snapshot.Get("aggregateMetadata")
 	transformers := aggregateMetadata.Get("transformers")
@@ -283,15 +295,12 @@ func (a *aggregator) replayAction(context moleculer.Context, params moleculer.Pa
 		return true
 	})
 
-	events := <-context.Call(a.eventStore.Name()+".list", M{"created": M{">": snapshotCreated}})
-
-	fmt.Println(events)
-
-	return nil
-}
-
-//eventsSince return all events since snapshot
-func (a *aggregator) eventsSince(snapshotID string) moleculer.Payload {
+	eventPage := <-context.Call(a.eventStore.Name()+".list", M{"query": M{
+		"created":   M{">=": snapshotCreated},
+		"eventType": TypeCommand,
+		"status":    StatusComplete,
+		"event":     M{"in": eventNames},
+	}})
 
 	// snaphot := a.brokerContext.Call(a.eventStore.Name()+".list", M{
 	// 	"query": M{"status": StatusComplete, "eventType": TypeCommand},

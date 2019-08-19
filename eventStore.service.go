@@ -172,6 +172,9 @@ func (e *eventStore) startDispatch(c moleculer.Context, p moleculer.Payload) int
 	return nil
 }
 
+//TODO -> move this to the adapter and make it a generic functionality :)..
+//basically.. moleculer.payload when mapped to bytes in SQLite -> gets serialized
+// and deserialized... using the serializer of choice. JSON is default.
 func (e *eventStore) getSnapshotAction() moleculer.Action {
 	return moleculer.Action{
 		Name: "getSnapshot",
