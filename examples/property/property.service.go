@@ -89,8 +89,8 @@ var Service = moleculer.ServiceSchema{
 		},
 	},
 	Events: []moleculer.Event{
-		propertiesAggregate.Create("property.transformProperty").From("property.created"),
-		summaryAggregate.Update("property.transformCountrySummary").From("property.created"),
+		propertiesAggregate.On("property.created").Create("property.transformProperty"),
+		summaryAggregate.On("property.created").Update("property.transformCountrySummary"),
 	},
 }
 

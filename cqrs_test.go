@@ -281,7 +281,7 @@ var _ = Describe("CQRS Pluggin", func() {
 				Name:   "propertyNotifier",
 				Mixins: []moleculer.Mixin{notifications.Mixin()},
 				Events: []moleculer.Event{
-					notifications.CreateMany("propertyNotifier.createNotifications").From("property.created"),
+					notifications.On("property.created").CreateMany("propertyNotifier.createNotifications"),
 				},
 				Actions: []moleculer.Action{
 					createNotifications,
@@ -292,35 +292,33 @@ var _ = Describe("CQRS Pluggin", func() {
 		It("should transform one event and save one aggregate record", func(done Done) {
 			bkr, _ := createBroker(1)
 			notificationCreated := make(chan moleculer.Payload, 1)
-			//transform the incoming property.created event into a property notification aggregate record.
-			transformPropertyNotification := func(context moleculer.Context, event moleculer.Payload) interface{} {
-				property := event.Get("payload")
-				name := "John"
-				mobileMsg := "Hi " + name + ", Property " + property.Get("name").String() + " with " + property.Get("bedrooms").String() + " was added to your account!"
-				notification := payload.New(M{
-					"eventId":      event.Get("id").Int(),
-					"smsContent":   mobileMsg,
-					"pushContent":  mobileMsg,
-					"emailContent": "...",
-				})
-				notificationCreated <- notification
-				return notification
+			//receives a property created event and transforms payload into a
+			//property notification aggregate record.
+			createNotification := moleculer.Action{
+				Name: "createNotification",
+				Handler: func(context moleculer.Context, event moleculer.Payload) interface{} {
+					property := event.Get("payload")
+					name := "John"
+					mobileMsg := "Hi " + name + ", Property " + property.Get("name").String() + " with " + property.Get("bedrooms").String() + " was added to your account!"
+					notification := payload.New(M{
+						"eventId":      event.Get("id").Int(),
+						"smsContent":   mobileMsg,
+						"pushContent":  mobileMsg,
+						"emailContent": "...",
+					})
+					notificationCreated <- notification
+					return notification
+				},
 			}
 			bkr.Publish(moleculer.ServiceSchema{
 				Name:   "propertyNotifier",
 				Mixins: []moleculer.Mixin{notifications.Mixin()},
 				Events: []moleculer.Event{
-					notifications.Create("propertyNotifier.transform").From("property.created"),
-					// {
-					// 	Name:    "property.created",
-					// 	Handler: notifications.Create("").From("property.created"),
-					// },
+					//notifications.Create("propertyNotifier.transform").From("property.created"),
+					notifications.On("property.created").Create("propertyNotifier.createNotification"),
 				},
 				Actions: []moleculer.Action{
-					{
-						Name:    "transform",
-						Handler: transformPropertyNotification,
-					},
+					createNotification,
 				},
 			})
 			bkr.Start()

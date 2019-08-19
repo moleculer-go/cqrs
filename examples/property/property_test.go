@@ -2,7 +2,6 @@ package property
 
 import (
 	"fmt"
-	"strconv"
 
 	"github.com/moleculer-go/moleculer"
 	"github.com/moleculer-go/moleculer/broker"
@@ -14,23 +13,7 @@ import (
 type M map[string]interface{}
 
 var _ = Describe("Property service", func() {
-	logLevel := "trace"
-
-	createMultipleProperties := func(bkr *broker.ServiceBroker, size int) {
-		for index := 1; index <= size; index++ {
-			city := "Wanaka"
-			if index%2 == 0 {
-				city = "Queenstown"
-			}
-			<-bkr.Call("property.create", M{
-				"name":        "Beach Villa Number " + strconv.Itoa(index),
-				"active":      true,
-				"bathrooms":   1.5,
-				"city":        city,
-				"countryCode": "NZ",
-			})
-		}
-	}
+	logLevel := "fatal"
 
 	It("property.created event be transformed into property and property summary aggregate", func(done Done) {
 		bkr := broker.New(&moleculer.Config{

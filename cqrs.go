@@ -36,27 +36,35 @@ type SnapshotStrategy func(aggregateName string) (BackupStrategy, RestoreStrateg
 
 type StoreFactory func(name string, cqrsFields, settings map[string]interface{}) store.Adapter
 
-type ActionMaping interface {
-	From(eventName string) moleculer.Event
+type EventMapping interface {
+	//From(eventName string) moleculer.Event
+
+	// Create 1 (one) aggregate record with the result (single payload) of the transformations.
+	Create(transformAction string) moleculer.Event
+
+	// Create multiple aggregate records with the result (list of payloads) of the transformations.
+	CreateMany(transformAction string) moleculer.Event
+
+	// Update an existing aggregate record if the result of the transformation has an id field,
+	// or creates a new aggregate record if no id is present.
+	Update(transformAction string) moleculer.Event
 }
 
 type Aggregator interface {
 	Mixin() moleculer.Mixin
-	// Create creates an aggregate record. Uses transformer to transfor the event into the aggregate record.
-	// emits:
-	// property.created.successfully at the end of the process or
-	// property.created.error when there is an issue/error transformring the event
-	Create(action string) ActionMaping
-	CreateMany(action string) ActionMaping
-	// Update changes an existing aggregate record
-	// if the result of the transformation has an id,
-	// or creates a new aggreagate record if no id is present.
-	Update(action string) ActionMaping
 
 	// Snapshot configure the snapshot behaviour of the aggregate
 	Snapshot(EventStorer) Aggregator
 
-	//Remove
+	//On starts a event mapping chain. It takes the event name and returns an
+	// EventMapping object, which is used to map the transformation actions and these methods
+	// return an moleculer.Event object.
+	// Example:
+	// On("user.created").Create("profile.userProfile")  -> returns moleculer.Event :)
+	// this will listen for the event: user.created and it will use
+	// the action profile.userProfile to transform the user.created event payload,
+	// the result will used to create a single new record in the aggregate.
+	On(event string) EventMapping
 }
 
 type M map[string]interface{}
