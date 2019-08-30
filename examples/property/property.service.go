@@ -17,6 +17,8 @@ func resolveSQLiteURI(settings map[string]interface{}) string {
 	return "file://" + folder.(string)
 }
 
+// storeFactory high order func that returns a cqrs.StoreFactory function :)
+// and merges the fields passed to this function, with the fields received by the cqrs.StoreFactory func.
 func storeFactory(fields ...map[string]interface{}) cqrs.StoreFactory {
 	return func(name string, cqrsFields, settings map[string]interface{}) store.Adapter {
 		fields = append(fields, cqrsFields)

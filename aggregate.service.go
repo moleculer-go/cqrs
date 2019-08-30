@@ -2,10 +2,10 @@ package cqrs
 
 import (
 	"errors"
-	"fmt"
+
+	"github.com/moleculer-go/moleculer/payload"
 
 	"github.com/moleculer-go/moleculer"
-	"github.com/moleculer-go/moleculer/payload"
 	"github.com/moleculer-go/moleculer/util"
 	"github.com/moleculer-go/store"
 	log "github.com/sirupsen/logrus"
@@ -41,6 +41,7 @@ type eventMapper struct {
 	eventName       string
 	aggregateName   string
 	transformAction string
+	aggregateAction string
 }
 
 func (a *aggregator) On(eventName string) EventMapping {
@@ -103,56 +104,129 @@ func (a *aggregator) createServiceSchema() {
 				Name:    "replay",
 				Handler: a.replayAction,
 			},
+			{
+				Name:    "transformAndCreate",
+				Handler: a.transformAndCreateAction,
+			},
+			{
+				Name:    "transformAndCreateMany",
+				Handler: a.transformAndCreateManyAction,
+			},
+			{
+				Name:    "transformAndUpdate",
+				Handler: a.transformAndUpdateAction,
+			},
 		},
 	}
 }
 
-// Create receives an transformer action and returns an eventMapper that can be used
-// to link with an event handler.
-// The event handler will create an aggregate record in the aggregate store.
+//transformAndCreateAction receives a transform action, an event and an aggregate name,
+// which the create will be applied.
+//It calls the transform action with the event, and with the result creates a aggregate record.
+func (a *aggregator) transformAndCreateAction(c moleculer.Context, params moleculer.Payload) interface{} {
+	transformAction := params.Get("transformAction").String()
+	event := params.Get("event")
+	eventID := event.Get("id").String()
+
+	record := <-c.Call(transformAction, event)
+	if record.IsError() {
+		c.Logger().Error(a.name+" [Aggregate] Create() Error. Could not transform event - eventId: ", eventID, " - error: ", record.Error())
+		c.Emit(a.name+".create.transform_error", record.Add("event", event))
+		return record
+	}
+	result := <-c.Call(a.name+".create", record.Add("eventId", eventID))
+	if result.IsError() {
+		c.Emit(a.name+".create.error", result.Add("event", event))
+		return record
+	}
+	return result
+}
+
+// Create receives an transform action and returns an moleculer event.
+// The event handler will create an aggregate record in the aggregate store with the result of the transformation.
 func (em *eventMapper) Create(transformAction string) moleculer.Event {
 	em.transformAction = transformAction
+	em.aggregateAction = "transformAndCreate"
 	return moleculer.Event{
 		Name:  em.eventName,
 		Group: em.transformAction,
 		Handler: func(c moleculer.Context, event moleculer.Payload) {
-			eventID := event.Get("id").String()
-			record := <-c.Call(em.transformAction, event)
-			if record.IsError() {
-				c.Logger().Error(em.aggregateName+" [Aggregate] Create() Error. Could not transform event - eventId: ", eventID, " - error: ", record.Error())
-				c.Emit(em.aggregateName+".create.transform_error", record.Add("event", event))
-				return
-			}
-			result := <-c.Call(em.aggregateName+".create", record.Add("eventId", eventID))
-			if result.IsError() {
-				c.Emit(em.aggregateName+".create.error", result.Add("event", event))
-			}
+			c.Call(
+				em.aggregateName+"."+em.aggregateAction,
+				payload.Empty().
+					Add("event", event).
+					Add("transformAction", em.transformAction))
 		},
 	}
+}
+
+//transformAndCreateManyAction receives a transform action, an event and an aggregate name,
+// which the create will be applied.
+//It calls the transform action with the event, and with the result creates a aggregate record.
+func (a *aggregator) transformAndCreateManyAction(c moleculer.Context, params moleculer.Payload) interface{} {
+	transformAction := params.Get("transformAction").String()
+	event := params.Get("event")
+	eventID := event.Get("id").String()
+
+	records := <-c.Call(transformAction, event)
+	results := []moleculer.Payload{}
+	for _, record := range records.Array() {
+		if record.IsError() {
+			c.Logger().Error(a.name+" [Aggregate] CreateMany() Could not transform event - eventId: ", eventID, " - error: ", record.Error())
+			c.Emit(a.name+".create.transform_error", record.Add("event", event))
+			continue
+		}
+		result := <-c.Call(a.name+".create", record.Add("eventId", eventID))
+		if result.IsError() {
+			c.Emit(a.name+".create.error", result.Add("event", event))
+			continue
+		}
+		results = append(results, result)
+	}
+	return results
 }
 
 // CreateMany receives an transformer and returns an EventHandler.
 // The event handler will create multiple  aggregate records in the aggregate store.
 func (em *eventMapper) CreateMany(transformAction string) moleculer.Event {
 	em.transformAction = transformAction
+	em.aggregateAction = "transformAndCreateMany"
 	return moleculer.Event{
 		Name:  em.eventName,
 		Group: em.transformAction,
 		Handler: func(c moleculer.Context, event moleculer.Payload) {
-			eventID := event.Get("id").String()
-			records := <-c.Call(em.transformAction, event)
-			for _, record := range records.Array() {
-				if record.IsError() {
-					c.Logger().Error(em.aggregateName+" [Aggregate] CreateMany() Could not transform event - eventId: ", eventID, " - error: ", record.Error())
-					c.Emit(em.aggregateName+".create.transform_error", record.Add("event", event))
-					continue
-				}
-				result := <-c.Call(em.aggregateName+".create", record.Add("eventId", eventID))
-				if result.IsError() {
-					c.Emit(em.aggregateName+".create.error", result.Add("event", event))
-				}
-			}
+			c.Call(
+				em.aggregateName+"."+em.aggregateAction,
+				payload.Empty().
+					Add("event", event).
+					Add("transformAction", em.transformAction))
 		},
+	}
+}
+
+func (a *aggregator) transformAndUpdateAction(c moleculer.Context, params moleculer.Payload) interface{} {
+	transformAction := params.Get("transformAction").String()
+	event := params.Get("event")
+	eventID := event.Get("id").String()
+
+	record := <-c.Call(transformAction, event)
+	if record.IsError() {
+		c.Logger().Error(a.name+" [Aggregate] Update() Could not transform event - eventId: ", eventID, " - error: ", record.Error())
+		c.Emit(a.name+".update.transform_error", record.Add("event", event))
+		return record
+	}
+	if record.Get("id").Exists() {
+		result := <-c.Call(a.name+".update", record.Add("eventId", eventID))
+		if result.IsError() {
+			c.Emit(a.name+".update.error", result.Add("event", event))
+		}
+		return result
+	} else {
+		result := <-c.Call(a.name+".create", record.Add("eventId", eventID))
+		if result.IsError() {
+			c.Emit(a.name+".create.error", result.Add("event", event))
+		}
+		return result
 	}
 }
 
@@ -160,28 +234,16 @@ func (em *eventMapper) CreateMany(transformAction string) moleculer.Event {
 // The event handler will update an existing aggregate record in the aggregate store.
 func (em *eventMapper) Update(transformAction string) moleculer.Event {
 	em.transformAction = transformAction
+	em.aggregateAction = "transformAndUpdate"
 	return moleculer.Event{
 		Name:  em.eventName,
 		Group: em.transformAction,
 		Handler: func(c moleculer.Context, event moleculer.Payload) {
-			eventID := event.Get("id").String()
-			record := <-c.Call(em.transformAction, event)
-			if record.IsError() {
-				c.Logger().Error(em.aggregateName+" [Aggregate] Update() Could not transform event - eventId: ", eventID, " - error: ", record.Error())
-				c.Emit(em.aggregateName+".update.transform_error", record.Add("event", event))
-				return
-			}
-			if record.Get("id").Exists() {
-				result := <-c.Call(em.aggregateName+".update", record.Add("eventId", eventID))
-				if result.IsError() {
-					c.Emit(em.aggregateName+".update.error", result.Add("event", event))
-				}
-			} else {
-				result := <-c.Call(em.aggregateName+".create", record.Add("eventId", eventID))
-				if result.IsError() {
-					c.Emit(em.aggregateName+".create.error", result.Add("event", event))
-				}
-			}
+			c.Call(
+				em.aggregateName+"."+em.aggregateAction,
+				payload.Empty().
+					Add("event", event).
+					Add("transformAction", em.transformAction))
 		},
 	}
 }
@@ -199,6 +261,7 @@ func (a *aggregator) Snapshot(eventStore EventStorer) Aggregator {
 	return a
 }
 
+//PAREI AQUI... add aggregate action in the transformers map.. and use it to replay the events.
 //transformers returns a map of events to a list of transformation actions -> map[string][]string
 func (a *aggregator) transformers() map[string][]string {
 	transformers := map[string][]string{}
@@ -256,7 +319,7 @@ func (a *aggregator) restoreAction(context moleculer.Context, params moleculer.P
 
 	err := a.eventStore.PauseEvents()
 	if err != nil {
-		return errors.New("aggregate.restore action failed. We could not create stop the event pump. Error: " + err.Error())
+		return errors.New("aggregate.restore action failed. We could not stop the event pump. Error: " + err.Error())
 	}
 	err = a.restore(snapshotID)
 	if err != nil {
@@ -270,24 +333,59 @@ func (a *aggregator) restoreAndReplayAction(context moleculer.Context, params mo
 	return nil
 }
 
-//may this should not be an aggregate responsability.. the event store must expose a replay API.
-//replayAction replays the events
+//replayAction replays the all events since a specific snapshotID
 func (a *aggregator) replayAction(context moleculer.Context, params moleculer.Payload) interface{} {
 
-	a.eventsSince(context, params.Get("snapshotID").String(), func(){
+	params = params.Only("snapshotID")
+	snapshot := <-context.Call(a.eventStoreName+"getSnapshot", params)
 
-	})
-	fmt.Println(events)
+	page := 1
+	pageSize := 100
+	total := 0
+	params = params.Add("pageSize", pageSize)
+	for {
+		batch := a.eventsSince(context, snapshot, params.Add("page", page).Add("total", total))
+		if batch.IsError() {
+			return batch.Error()
+		}
+		a.replayEvents(context, snapshot, batch.Get("rows"))
+		if batch.Get("page").Int() >= batch.Get("totalPages").Int() || batch.Get("rows").Len() == 0 {
+			break
+		}
+		total = params.Get("total").Int()
+		page = batch.Get("page").Int() + 1
+	}
 
 	return nil
 }
 
-//eventsSince return all events since snapshot
-func (a *aggregator) eventsSince(context moleculer.Context, snapshotID string) moleculer.Payload {
-	snapshot := <-context.Call(a.eventStoreName+"getSnapshot", payload.Empty().Add("snapshotID", snapshotID))
+//replayEvents invoke all transformation actions and aggregate action for each event, in the list of events.
+func (a *aggregator) replayEvents(context moleculer.Context, snapshot, events moleculer.Payload) {
+	events.ForEach(func(_ interface{}, event moleculer.Payload) bool {
+		aggregateMetadata := snapshot.Get("aggregateMetadata")
+		transformers := aggregateMetadata.Get("transformers")
+		eventName := event.Get("event").String()
+		actions := transformers.Get(eventName)
+		if !actions.Exists() || actions.Len() == 0 {
+			return true
+		}
+		actions.ForEach(func(_ interface{}, action moleculer.Payload) bool {
+			<-context.Call(action.String(), event)
+			return true
+		})
+		return true
+	})
+}
+
+//eventsSince fetch all events since snapshot ordered by the created date with pagination (pageSize and page params)
+func (a *aggregator) eventsSince(context moleculer.Context, snapshot, params moleculer.Payload) moleculer.Payload {
 	snapshotCreated := snapshot.Get("created").Time()
 	aggregateMetadata := snapshot.Get("aggregateMetadata")
 	transformers := aggregateMetadata.Get("transformers")
+
+	pageSize := params.Get("pageSize").Int()
+	page := params.Get("page").Int()
+	total := params.Get("total").Int()
 
 	eventNames := []string{}
 	transformers.ForEach(func(key interface{}, value moleculer.Payload) bool {
@@ -295,31 +393,16 @@ func (a *aggregator) eventsSince(context moleculer.Context, snapshotID string) m
 		return true
 	})
 
-	eventPage := <-context.Call(a.eventStore.Name()+".list", M{"query": M{
-		"created":   M{">=": snapshotCreated},
-		"eventType": TypeCommand,
-		"status":    StatusComplete,
-		"event":     M{"in": eventNames},
-	}})
-
-	// snaphot := a.brokerContext.Call(a.eventStore.Name()+".list", M{
-	// 	"query": M{"status": StatusComplete, "eventType": TypeCommand},
-	// })
-	// morePages := true
-	// for {
-	// 	if !morePages {
-	// 		break
-	// 	}
-
-	// 	eventPage := a.brokerContext.Call(a.eventStore.Name()+".list", M{
-	// 		"query": M{"status": StatusComplete, "eventType": TypeCommand},
-	// 		"sort":  "created",
-	// 		"limit": limit,
-	// 	})
-	// 	if events.Len() > 0 {
-	// 		return events
-	// 	}
-
-	// }]
-	return nil
+	return <-context.Call(a.eventStore.Name()+".find", M{
+		"query": M{
+			"eventType": TypeCommand,
+			"status":    StatusComplete,
+			"event":     M{"in": eventNames},
+			"created":   M{">=": snapshotCreated},
+		},
+		"sort":   "created",
+		"total":  total,
+		"offset": (page - 1) * pageSize,
+		"limit":  page * pageSize,
+	})
 }
