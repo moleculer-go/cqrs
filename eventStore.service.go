@@ -67,7 +67,6 @@ func (e *eventStore) Mixin() moleculer.Mixin {
 				Name:    "$stopDispatch",
 				Handler: e.stopDispatch,
 			},
-			e.getSnapshotAction(),
 		},
 	}
 }
@@ -172,7 +171,7 @@ func (e *eventStore) startDispatch(c moleculer.Context, p moleculer.Payload) int
 	return nil
 }
 
-//TODO -> move this to the adapter and make it a generic functionality :)..
+//TODO -> move this []byte to payload conversion to the adapter and make it a generic functionality :)..
 //basically.. moleculer.payload when mapped to bytes in SQLite -> gets serialized
 // and deserialized... using the serializer of choice. JSON is default.
 func (e *eventStore) getSnapshotAction() moleculer.Action {
@@ -224,6 +223,12 @@ func (e *eventStore) createEventStoreService() {
 		},
 		Started: e.storeServiceStarted,
 		Stopped: e.storeServiceStopped,
+		Actions: []moleculer.Action{
+			e.getSnapshotAction(),
+			e.startSnapshotAction(),
+			e.completeSnapshotAction(),
+			e.failSnapshotAction(),
+		},
 	}
 }
 
@@ -285,7 +290,7 @@ func (e *eventStore) StartEvents() {
 	go e.dispatchEvents()
 }
 
-// StartSnapshot starts a snapshot:
+// startSnapshotAction starts a snapshot:
 // 1) Pause event pump , so no morechanges to aggreagates will be done.
 // 1.B) Alternative design: Instead of pausing/stoping the event pump, which can be related to many aggregates.. we should only pause the aggregate events.
 //		the aggregate must pass on a filter criteria.. so the event pump can pause just the events that matches the filter and continue to serve other aggregates.
@@ -294,17 +299,73 @@ func (e *eventStore) StartEvents() {
 // 2) Create an event to record the snapshot, so it can be replayed from this point.
 // Error Handling:
 //  In case snapshotEvent fails, it restarts the pump and returns the error.
-func (e *eventStore) StartSnapshot(snapshotName string, aggregateMetadata map[string]interface{}) error {
-	e.logger.Debug("StartSnapshot snapshotName: ", snapshotName)
-	//pause event pumps -> pause aggregate changes :)
-	e.PauseEvents()
+func (e *eventStore) startSnapshotAction() moleculer.Action {
+	return moleculer.Action{
+		Name: "startSnapshot",
+		Handler: func(context moleculer.Context, params moleculer.Payload) interface{} {
 
-	err := e.snapshotEvent(snapshotName, aggregateMetadata)
-	if err != nil {
-		e.StartEvents()
-		return err
+			snapshotID := params.Get("snapshotID").String()
+			aggregateMetadata := params.Get("aggregateMetadata").RawMap()
+
+			e.logger.Debug("StartSnapshot snapshotID: ", snapshotID)
+			//pause event pumps -> pause aggregate changes :)
+			//e.PauseEvents()
+
+			err := e.snapshotEvent(snapshotID, aggregateMetadata)
+			if err != nil {
+				//e.StartEvents()
+				return err
+			}
+			return nil
+		},
 	}
-	return nil
+}
+
+// completeSnapshotAction complete a snapshot by resuming the event pump and
+// recording an event to represent this.
+func (e *eventStore) completeSnapshotAction() moleculer.Action {
+	return moleculer.Action{
+		Name: "completeSnapshot",
+		Handler: func(c moleculer.Context, params moleculer.Payload) interface{} {
+			snapshotID := params.Get("snapshotID").String()
+			events := e.eventStoreAdapter.FindAndUpdate(payload.New(M{
+				"query": M{"event": snapshotID, "eventType": TypeSnapshotCreated},
+				"limit": 1,
+				"update": M{
+					"eventType": TypeSnapshotCompleted,
+					"updated":   time.Now().Unix(),
+				},
+			}))
+			if events.Len() < 1 {
+				return errors.New("No snapshot found with id: " + snapshotID)
+			}
+			//e.StartEvents()
+			return nil
+		},
+	}
+}
+
+// failSnapshotAction fails a snapshot by recording the failure in the event record.
+func (e *eventStore) failSnapshotAction() moleculer.Action {
+	return moleculer.Action{
+		Name: "failSnapshot",
+		Handler: func(c moleculer.Context, params moleculer.Payload) interface{} {
+			snapshotID := params.Get("snapshotID").String()
+			events := e.eventStoreAdapter.FindAndUpdate(payload.New(M{
+				"query": M{"event": snapshotID, "eventType": TypeSnapshotCreated},
+				"limit": 1,
+				"update": M{
+					"eventType": TypeSnapshotFailed,
+					"updated":   time.Now().Unix(),
+				},
+			}))
+			if events.Len() < 1 {
+				return errors.New("No snapshot found with id: " + snapshotID)
+			}
+			//e.StartEvents()
+			return nil
+		},
+	}
 }
 
 // snapshotEvent create an snapshot event in the event store and stores the aggregate metadata as payload.
@@ -322,41 +383,6 @@ func (e *eventStore) snapshotEvent(snapshotID string, aggregateMetadata map[stri
 	if r.IsError() {
 		return r.Error()
 	}
-	return nil
-}
-
-// CompleteSnapshot complete a snapshot by resuming the event pump and
-// recording an event to represent this.
-func (e *eventStore) CompleteSnapshot(snapshotID string) error {
-	events := e.eventStoreAdapter.FindAndUpdate(payload.New(M{
-		"query": M{"event": snapshotID, "eventType": TypeSnapshotCreated},
-		"limit": 1,
-		"update": M{
-			"eventType": TypeSnapshotCompleted,
-			"updated":   time.Now().Unix(),
-		},
-	}))
-	if events.Len() < 1 {
-		return errors.New("No snapshot found with id: " + snapshotID)
-	}
-	e.StartEvents()
-	return nil
-}
-
-// FailSnapshot fails a snapshot by recording the failure in the event record.
-func (e *eventStore) FailSnapshot(snapshotID string) error {
-	events := e.eventStoreAdapter.FindAndUpdate(payload.New(M{
-		"query": M{"event": snapshotID, "eventType": TypeSnapshotCreated},
-		"limit": 1,
-		"update": M{
-			"eventType": TypeSnapshotFailed,
-			"updated":   time.Now().Unix(),
-		},
-	}))
-	if events.Len() < 1 {
-		return errors.New("No snapshot found with id: " + snapshotID)
-	}
-	e.StartEvents()
 	return nil
 }
 
@@ -389,14 +415,14 @@ func (e *eventStore) validExtras(extras map[string]interface{}) bool {
 // fields return a map with fields that this event store needs in the adapter
 func (e *eventStore) fields() M {
 	f := M{
-		"event":      "string",
-		"version":    "integer",
-		"created":    "integer",
-		"updated":    "integer",
-		"status":     "integer",
-		"eventType":  "integer",
-		"payload":    "[]byte",
-		"aggregates": "[]string",
+		"event":     "string",
+		"version":   "integer",
+		"created":   "integer",
+		"updated":   "integer",
+		"status":    "integer",
+		"eventType": "integer",
+		"payload":   "[]byte",
+		//"aggregates": "[]string", // is this to be used by the filter ?
 	}
 	if len(e.extraFields) > 0 {
 		for k, v := range e.extraFields {

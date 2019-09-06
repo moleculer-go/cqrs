@@ -13,12 +13,12 @@ type EventStorer interface {
 	PersistEvent(eventName string, extraParams ...map[string]interface{}) moleculer.ActionHandler
 
 	//try to move these to a interface just around snapshoter
-	StartSnapshot(snapshotName string, aggregateMetadata map[string]interface{}) error
-	CompleteSnapshot(snapshotName string) error
-	FailSnapshot(snapshotName string) error
+	// StartSnapshot(snapshotName string, aggregateMetadata map[string]interface{}) error
+	// CompleteSnapshot(snapshotName string) error
+	// FailSnapshot(snapshotName string) error
 
-	PauseEvents() error
-	StartEvents()
+	// PauseEvents() error
+	// StartEvents()
 
 	Name() string
 }
@@ -54,7 +54,7 @@ type Aggregator interface {
 	Mixin() moleculer.Mixin
 
 	// Snapshot configure the snapshot behaviour of the aggregate
-	Snapshot(EventStorer) Aggregator
+	Snapshot(eventStore string) Aggregator
 
 	//On starts a event mapping chain. It takes the event name and returns an
 	// EventMapping object, which is used to map the transformation actions and these methods

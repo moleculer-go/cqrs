@@ -2,6 +2,7 @@ package cqrs
 
 import (
 	"errors"
+	"fmt"
 
 	"github.com/moleculer-go/moleculer/payload"
 
@@ -28,13 +29,14 @@ type aggregator struct {
 	brokerContext moleculer.BrokerContext
 	parentService moleculer.ServiceSchema
 
-	eventStore     EventStorer // remove this.. use the eventStoreName.  this creates coupling between the event store and the aggregate.. it should all be through actions.
 	eventStoreName string
 
 	backup  BackupStrategy
 	restore RestoreStrategy
 
 	eventMappings []eventMapper
+
+	processEvents bool
 }
 
 type eventMapper struct {
@@ -42,10 +44,11 @@ type eventMapper struct {
 	aggregateName   string
 	transformAction string
 	aggregateAction string
+	isActive        func() bool
 }
 
 func (a *aggregator) On(eventName string) EventMapping {
-	return &eventMapper{aggregateName: a.name, eventName: eventName}
+	return &eventMapper{aggregateName: a.name, eventName: eventName, isActive: func() bool { return a.processEvents }}
 }
 
 // Mixin return the mixin schema for CQRS plugin
@@ -62,12 +65,14 @@ func (a *aggregator) parentServiceStarted(c moleculer.BrokerContext, svc molecul
 	a.brokerContext = c
 	a.parentService = svc
 	a.logger = c.Logger().WithField("aggregate", a.name)
+	a.processEvents = true
 
 	a.createServiceSchema()
 	c.Logger().Debug("parentServiceStarted() before publishing service: ", a.serviceSchema.Name)
 	c.Publish(a.serviceSchema)
 	c.WaitFor(a.serviceSchema.Name)
 	c.Logger().Debug("parentServiceStarted() service: ", a.serviceSchema.Name, " was published!")
+
 }
 
 func (a *aggregator) settings() map[string]interface{} {
@@ -87,6 +92,9 @@ func (a *aggregator) createServiceSchema() {
 	a.serviceSchema = moleculer.ServiceSchema{
 		Name:   a.name,
 		Mixins: []moleculer.Mixin{store.Mixin(a.store)},
+		Started: func(c moleculer.BrokerContext, s moleculer.ServiceSchema) {
+			fmt.Println("####### -> " + a.name + " started!")
+		},
 		Actions: []moleculer.Action{
 			{
 				Name:    "snapshot",
@@ -151,8 +159,12 @@ func (em *eventMapper) Create(transformAction string) moleculer.Event {
 		Name:  em.eventName,
 		Group: em.transformAction,
 		Handler: func(c moleculer.Context, event moleculer.Payload) {
+			if !em.isActive() {
+				return
+			}
+			action := em.aggregateName + "." + em.aggregateAction
 			c.Call(
-				em.aggregateName+"."+em.aggregateAction,
+				action,
 				payload.Empty().
 					Add("event", event).
 					Add("transformAction", em.transformAction))
@@ -195,6 +207,9 @@ func (em *eventMapper) CreateMany(transformAction string) moleculer.Event {
 		Name:  em.eventName,
 		Group: em.transformAction,
 		Handler: func(c moleculer.Context, event moleculer.Payload) {
+			if !em.isActive() {
+				return
+			}
 			c.Call(
 				em.aggregateName+"."+em.aggregateAction,
 				payload.Empty().
@@ -239,6 +254,9 @@ func (em *eventMapper) Update(transformAction string) moleculer.Event {
 		Name:  em.eventName,
 		Group: em.transformAction,
 		Handler: func(c moleculer.Context, event moleculer.Payload) {
+			if !em.isActive() {
+				return
+			}
 			c.Call(
 				em.aggregateName+"."+em.aggregateAction,
 				payload.Empty().
@@ -256,12 +274,12 @@ func (a *aggregator) fields() map[string]interface{} {
 }
 
 //Snapshot setup the snashot options for this aggregate.
-func (a *aggregator) Snapshot(eventStore EventStorer) Aggregator {
-	a.eventStore = eventStore
+func (a *aggregator) Snapshot(eventStore string) Aggregator {
+	a.eventStoreName = eventStore
 	return a
 }
 
-//PAREI AQUI... add aggregate action in the transformers map.. and use it to replay the events.
+//PAREI AQUI... add aggregate action in the transformers map.. and use snapshotIDit to replay the events.
 //transformers returns a map of events to a list of transformation actions -> map[string][]string
 func (a *aggregator) transformers() map[string][]string {
 	transformers := map[string][]string{}
@@ -284,60 +302,86 @@ func (a *aggregator) transformers() map[string][]string {
 //  - Rationale:
 //  ---> Since you created an event about the start of the snapshot at the same moment you paused the pump. this event should point to the backup file. so it can be used when restoring the snapshot.
 func (a *aggregator) snapshotAction(context moleculer.Context, params moleculer.Payload) interface{} {
-	if a.eventStore == nil {
+	if a.eventStoreName == "" {
 		return errors.New("snapshot not configured for this aggregate. eventStore is nil")
 	}
 
 	//snapshot the aggregate
-	snapshotID := "snapshot_" + util.RandomString(12)
-	aggregateMetadata := map[string]interface{}{
-		"transformers": a.transformers(),
-	}
+	snapshotID := "snapshot_" + util.RandomString(5)
 
-	err := a.eventStore.StartSnapshot(snapshotID, aggregateMetadata)
-	if err != nil {
+	r := <-context.Call(a.eventStoreName+".startSnapshot", M{
+		"snapshotID": snapshotID,
+		"aggregateMetadata": M{
+			"transformers": a.transformers(),
+		},
+	})
+	if r.IsError() {
 		// error creating the snapshot event
-		return errors.New("aggregate.snapshot action failed. We could not create the snapshot event. Error: " + err.Error())
+		return errors.New("aggregate.snapshot action failed. We could not create the snapshot event. Error: " + r.Error().Error())
 	}
-	err = a.backup(snapshotID)
+	err := a.backup(snapshotID)
 	if err != nil {
-		a.eventStore.FailSnapshot(snapshotID)
+		<-context.Call(a.eventStoreName+".failSnapshot", M{"snapshotID": snapshotID})
 		// error creating the backup
 		return errors.New("aggregate.snapshot action failed. We could not backup the aggregate. Error: " + err.Error())
 	}
 
-	err = a.eventStore.CompleteSnapshot(snapshotID)
-	if err != nil {
-		return errors.New("aggregate.snapshot action failed. We could not create the snapshot complete event. Error: " + err.Error())
+	r = <-context.Call(a.eventStoreName+".completeSnapshot", M{"snapshotID": snapshotID})
+	if r.IsError() {
+		return errors.New("aggregate.snapshot action failed. We could not create the snapshot complete event. Error: " + r.Error().Error())
 	}
 	return snapshotID
+}
+
+// stopEvents stop the aggregate from processing incoming events.
+// it has effect on this aggregate instance. Need to investigate if is a good idea to broadcast an event
+// and use the event o change the flag.. this way multiple instances of the same aggregate can pause and restart
+// the issue with that is fire and forget.. there is no guarantee that all have paused.
+//. for now.. for simple deployment and to complete the feature and its tests single instance is enough.
+func (a *aggregator) stopEvents() {
+	a.processEvents = false
+}
+
+func (a *aggregator) startEvents() {
+	a.processEvents = true
 }
 
 // restore a snapshot (backup) data back into the aggregate
 func (a *aggregator) restoreAction(context moleculer.Context, params moleculer.Payload) interface{} {
 	snapshotID := params.Get("snapshotID").String()
 
-	err := a.eventStore.PauseEvents()
-	if err != nil {
-		return errors.New("aggregate.restore action failed. We could not stop the event pump. Error: " + err.Error())
-	}
-	err = a.restore(snapshotID)
+	a.stopEvents()
+
+	err := a.restore(snapshotID)
 	if err != nil {
 		return errors.New("aggregate.restore action failed. We could not restore the aggregate backup. Error: " + err.Error())
 	}
-	a.eventStore.StartEvents()
+
+	a.startEvents()
 	return snapshotID
 }
 
 func (a *aggregator) restoreAndReplayAction(context moleculer.Context, params moleculer.Payload) interface{} {
-	return nil
+	snapshotID := params.Get("snapshotID").String()
+
+	a.stopEvents()
+
+	err := a.restore(snapshotID)
+	if err != nil {
+		return errors.New("aggregate.restore action failed. We could not restore the aggregate backup. Error: " + err.Error())
+	}
+
+	a.replayAction(context, params)
+
+	a.startEvents()
+	return snapshotID
 }
 
 //replayAction replays the all events since a specific snapshotID
 func (a *aggregator) replayAction(context moleculer.Context, params moleculer.Payload) interface{} {
 
 	params = params.Only("snapshotID")
-	snapshot := <-context.Call(a.eventStoreName+"getSnapshot", params)
+	snapshot := <-context.Call(a.eventStoreName+".getSnapshot", params)
 
 	page := 1
 	pageSize := 100
@@ -393,7 +437,7 @@ func (a *aggregator) eventsSince(context moleculer.Context, snapshot, params mol
 		return true
 	})
 
-	return <-context.Call(a.eventStore.Name()+".find", M{
+	return <-context.Call(a.eventStoreName+".find", M{
 		"query": M{
 			"eventType": TypeCommand,
 			"status":    StatusComplete,
