@@ -564,7 +564,7 @@ var _ = Describe("CQRS Pluggin", func() {
 				bkr.Stop()
 				Expect(os.RemoveAll(dbAggregatesFolder + "/notificationsAggregate")).Should(Succeed())
 				bkr.Start()
-				time.Sleep(time.Millisecond * 100)
+				time.Sleep(time.Millisecond * 500)
 
 				//aggregate should be empty
 				notificationsCount := <-bkr.Call("notificationsAggregate.count", M{})

@@ -41,7 +41,7 @@ var summaryAggregate = cqrs.Aggregate(
 		"mountain":    "integer",
 	}),
 	cqrs.NoSnapshot,
-).Snapshot(events)
+).Snapshot("propertyEventStore")
 
 var propertiesAggregate = cqrs.Aggregate(
 	"propertyAggregate",
@@ -71,7 +71,7 @@ var propertiesAggregate = cqrs.Aggregate(
 			"sourceIds": "map",
 		},
 	}),
-	cqrs.NoSnapshot).Snapshot(events)
+	cqrs.NoSnapshot).Snapshot("propertyEventStore")
 
 var Service = moleculer.ServiceSchema{
 	Name:   "property",
