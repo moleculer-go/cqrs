@@ -48,7 +48,9 @@ type eventMapper struct {
 }
 
 func (a *aggregator) On(eventName string) EventMapping {
-	return &eventMapper{aggregateName: a.name, eventName: eventName, isActive: func() bool { return a.processEvents }}
+	return &eventMapper{aggregateName: a.name, eventName: eventName, isActive: func() bool {
+		return a.processEvents
+	}}
 }
 
 // Mixin return the mixin schema for CQRS plugin
