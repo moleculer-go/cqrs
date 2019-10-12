@@ -15,7 +15,7 @@ type M map[string]interface{}
 var _ = Describe("Property service", func() {
 	logLevel := "fatal"
 
-	It("property.created event be transformed into property and property summary aggregate", func(done Done) {
+	XIt("property.created event be transformed into property and property summary aggregate", func(done Done) {
 		bkr := broker.New(&moleculer.Config{
 			LogLevel: logLevel,
 		})
