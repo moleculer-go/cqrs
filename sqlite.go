@@ -4,7 +4,8 @@ import (
 	"github.com/moleculer-go/store/sqlite"
 )
 
-//FieldsToSQLiteColumns createColumns given the fields configuration return a list oif sqlite columns.
+// FieldsToSQLiteColumns create columns given the fields
+// configuration return a list of sqlite columns.
 func FieldsToSQLiteColumns(list ...map[string]interface{}) []sqlite.Column {
 	uniqCols := map[string]sqlite.Column{}
 	for _, fields := range list {

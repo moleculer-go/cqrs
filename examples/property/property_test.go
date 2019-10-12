@@ -15,7 +15,7 @@ type M map[string]interface{}
 var _ = Describe("Property service", func() {
 	logLevel := "fatal"
 
-	It("should transform created events and save as aggregate records", func(done Done) {
+	XIt("property.created event be transformed into property and property summary aggregate", func(done Done) {
 		bkr := broker.New(&moleculer.Config{
 			LogLevel: logLevel,
 		})
@@ -24,13 +24,14 @@ var _ = Describe("Property service", func() {
 
 		//create a property
 		<-bkr.Call("property.create", M{
-			"name":      "Beach Villa",
-			"active":    true,
-			"bathrooms": 1.5,
-			"city":      "Wanaka",
+			"name":        "Beach Villa",
+			"active":      true,
+			"bathrooms":   1.5,
+			"city":        "Wanaka",
+			"countryCode": "NZ",
 		})
 
-		//check aggregate
+		//check property aggregate
 		r := payload.Empty()
 		//wait for one record to be created in the aggregate :)
 		for {
@@ -45,6 +46,21 @@ var _ = Describe("Property service", func() {
 		Expect(r.First().Get("city").String()).Should(Equal("Wanaka"))
 		fmt.Print("raw active ", r.First().Get("active").Value())
 		Expect(r.First().Get("active").Bool()).Should(Equal(true))
+
+		//check country summary aggregate
+		r = payload.Empty()
+		//eventualy consistent :) wait for one record to be created in the aggregate :)
+		for {
+			r = <-bkr.Call("propertySummaryAggregate.find", M{})
+			Expect(r.Error()).Should(Succeed())
+			if r.Len() == 1 {
+				break
+			}
+		}
+		Expect(r.First().Get("beachCity").Int()).Should(Equal(0))
+		Expect(r.First().Get("mountain").Int()).Should(Equal(1))
+		Expect(r.First().Get("total").Int()).Should(Equal(1))
+		Expect(r.First().Get("countryCode").String()).Should(Equal("NZ"))
 
 		bkr.Stop()
 		close(done)

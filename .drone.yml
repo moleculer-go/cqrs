@@ -14,7 +14,8 @@ steps:
       COVERALLS_TOKEN:
         from_secret: COVERALLS_TOKEN
     commands:
-      - go run github.com/onsi/ginkgo/ginkgo -r --keepGoing --cover --trace
+      - go version
+      - go run github.com/onsi/ginkgo/ginkgo -r --cover --trace
       - go run github.com/modocache/gover ./ coverage.txt
       - curl -s https://codecov.io/bash | bash || echo "Failed to upload to codecov.io!"
       - go run github.com/mattn/goveralls -coverprofile=coverage.txt -service=drone.io || echo "Failed to upload to coverrals!"

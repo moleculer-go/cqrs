@@ -1,6 +1,7 @@
 package cqrs
 
 import (
+	"errors"
 	"time"
 
 	"github.com/moleculer-go/moleculer"
@@ -11,6 +12,13 @@ import (
 )
 
 const (
+	TypeCommand           = 0
+	TypeSnapshotCreated   = 1
+	TypeSnapshotCompleted = 2
+	TypeSnapshotFailed    = 3
+)
+
+const (
 	StatusCreated    = 0
 	StatusProcessing = 1
 	StatusComplete   = 2
@@ -18,11 +26,11 @@ const (
 	StatusRetrying   = 4
 )
 
-func EventStore(name string, createAdapter AdapterFactory, fields ...M) EventStorer {
+func EventStore(name string, storeFactory StoreFactory, fields ...M) EventStorer {
 	return &eventStore{
-		name:          name,
-		createAdapter: createAdapter,
-		extraFields:   mergeMapsList(fields),
+		name:         name,
+		storeFactory: storeFactory,
+		extraFields:  mergeMapsList(fields),
 	}
 }
 
@@ -30,7 +38,7 @@ type eventStore struct {
 	name              string
 	eventStoreService moleculer.ServiceSchema
 	eventStoreAdapter store.Adapter
-	createAdapter     AdapterFactory
+	storeFactory      StoreFactory
 
 	extraFields map[string]interface{}
 
@@ -41,6 +49,8 @@ type eventStore struct {
 	stopping          bool
 	dispatchBatchSize int
 	poolingInterval   time.Duration
+
+	dispatchEventsStopped bool
 }
 
 // Mixin return the mixin schema for the eventStore plugin
@@ -54,8 +64,6 @@ func (e *eventStore) Mixin() moleculer.Mixin {
 				Handler: e.startDispatch,
 			},
 			{
-				//TODO make actions prefixed with $ available only in then local broker.
-				//so they are never published to other brokers.
 				Name:    "$stopDispatch",
 				Handler: e.stopDispatch,
 			},
@@ -85,7 +93,9 @@ func (e *eventStore) storeServiceStopped(c moleculer.BrokerContext, svc molecule
 	c.Logger().Debug("eventStore storeServiceStopped() called...")
 }
 
-type M map[string]interface{}
+func (e *eventStore) Name() string {
+	return e.name
+}
 
 //fetchNextEvent return the next event to be processed.
 // blocks until there is a event available.
@@ -96,7 +106,7 @@ func (e *eventStore) fetchNextEvents(limit int) moleculer.Payload {
 			return payload.EmptyList()
 		}
 		events := e.eventStoreAdapter.FindAndUpdate(payload.New(M{
-			"query": M{"status": StatusCreated},
+			"query": M{"status": StatusCreated, "eventType": TypeCommand},
 			"sort":  "created",
 			"limit": limit,
 			"update": M{
@@ -122,8 +132,10 @@ func (e *eventStore) prepareEventForEmit(event moleculer.Payload) moleculer.Payl
 
 //dispatchEvents read events from the store and dispatch events.
 func (e *eventStore) dispatchEvents() {
+	e.dispatchEventsStopped = false
 	for {
 		if e.stopping {
+			e.dispatchEventsStopped = true
 			return
 		}
 		batch := e.fetchNextEvents(e.dispatchBatchSize)
@@ -137,6 +149,7 @@ func (e *eventStore) dispatchEvents() {
 				"updated": updated,
 			}))
 			if e.stopping {
+				e.dispatchEventsStopped = true
 				return
 			}
 		}
@@ -156,6 +169,22 @@ func (e *eventStore) startDispatch(c moleculer.Context, p moleculer.Payload) int
 		go e.dispatchEvents()
 	}
 	return nil
+}
+
+//TODO -> move this []byte to payload conversion to the adapter and make it a generic functionality :)..
+//basically.. moleculer.payload when mapped to bytes in SQLite -> gets serialized
+// and deserialized... using the serializer of choice. JSON is default.
+func (e *eventStore) getSnapshotAction() moleculer.Action {
+	return moleculer.Action{
+		Name: "getSnapshot",
+		Handler: func(c moleculer.Context, p moleculer.Payload) interface{} {
+			snapshotID := p.Get("snapshotID").String()
+			snapshot := <-c.Call(e.name+".findOne", M{"event": snapshotID})
+			payload := snapshot.Get("payload").ByteArray()
+			aggregateMetadata := e.serializer.BytesToPayload(&payload)
+			return snapshot.Add("aggregateMetadata", aggregateMetadata)
+		},
+	}
 }
 
 // parentServiceStarted parent service started.
@@ -180,7 +209,7 @@ func (e *eventStore) settings() M {
 
 func (e *eventStore) createEventStoreService() {
 	fieldMap := e.fields()
-	e.eventStoreAdapter = e.createAdapter(e.name, fieldMap, e.settings())
+	e.eventStoreAdapter = e.storeFactory(e.name, fieldMap, e.settings())
 
 	fields := []string{}
 	for f := range fieldMap {
@@ -194,19 +223,26 @@ func (e *eventStore) createEventStoreService() {
 		},
 		Started: e.storeServiceStarted,
 		Stopped: e.storeServiceStopped,
+		Actions: []moleculer.Action{
+			e.getSnapshotAction(),
+			e.startSnapshotAction(),
+			e.completeSnapshotAction(),
+			e.failSnapshotAction(),
+		},
 	}
 }
 
-// NewEvent receives eventName and extraParams and returns an action handler
+// PersistEvent receives eventName and extraParams and returns an action handler
 // that saves the payload as an event record inside the event store.
 // extraParams are label=value to be saved in the event record.
 // if it fails to save the event to the store it emits the event eventName.failed
-func (e *eventStore) NewEvent(eventName string, extraParams ...map[string]interface{}) moleculer.ActionHandler {
+func (e *eventStore) PersistEvent(eventName string, extraParams ...map[string]interface{}) moleculer.ActionHandler {
 	return func(c moleculer.Context, p moleculer.Payload) interface{} {
 		event := M{
-			"event":   eventName,
-			"created": time.Now().Unix(),
-			"status":  StatusCreated,
+			"event":     eventName,
+			"created":   time.Now().Unix(),
+			"status":    StatusCreated,
+			"eventType": TypeCommand,
 		}
 		//merge event with params
 		extra := e.parseExtraParams(extraParams)
@@ -228,6 +264,126 @@ func (e *eventStore) NewEvent(eventName string, extraParams ...map[string]interf
 		}
 		return r
 	}
+}
+
+// 1.B) Alternative design: Instead of pausing/stoping the event pump, which can be related to many aggregates.. we should only pause the aggregate events.
+//		the aggregate must pass on a filter criteria.. so the event pump can pause just the events that matches the filter and continue to serve other aggregates.
+//		there could be aggreagates that share the same events, and there fore snapshot on aggreagte A can impact aggreagtee B if shares the same events, but the impact
+// 		stops there.
+
+// PauseEvents current implementatio pause event whole pump.
+// 		change proposed is to have a filter, so we can pause only for certain events.
+func (e *eventStore) PauseEvents() error {
+	e.stopping = true
+	for {
+		if e.dispatchEventsStopped {
+			break
+		}
+	}
+	return nil
+}
+
+//StartEvents start event pump.
+func (e *eventStore) StartEvents() {
+	e.stopping = false
+	e.logger.Debug("starting event pump!")
+	go e.dispatchEvents()
+}
+
+// startSnapshotAction starts a snapshot:
+// 1) Pause event pump , so no morechanges to aggreagates will be done.
+// 1.B) Alternative design: Instead of pausing/stoping the event pump, which can be related to many aggregates.. we should only pause the aggregate events.
+//		the aggregate must pass on a filter criteria.. so the event pump can pause just the events that matches the filter and continue to serve other aggregates.
+//		there could be aggreagates that share the same events, and there fore snapshot on aggreagte A can impact aggreagtee B if shares the same events, but the impact
+// 		stops there.
+// 2) Create an event to record the snapshot, so it can be replayed from this point.
+// Error Handling:
+//  In case snapshotEvent fails, it restarts the pump and returns the error.
+func (e *eventStore) startSnapshotAction() moleculer.Action {
+	return moleculer.Action{
+		Name: "startSnapshot",
+		Handler: func(context moleculer.Context, params moleculer.Payload) interface{} {
+
+			snapshotID := params.Get("snapshotID").String()
+			aggregateMetadata := params.Get("aggregateMetadata").RawMap()
+
+			e.logger.Debug("StartSnapshot snapshotID: ", snapshotID)
+			//pause event pumps -> pause aggregate changes :)
+			//e.PauseEvents()
+
+			err := e.snapshotEvent(snapshotID, aggregateMetadata)
+			if err != nil {
+				//e.StartEvents()
+				return err
+			}
+			return nil
+		},
+	}
+}
+
+// completeSnapshotAction complete a snapshot by resuming the event pump and
+// recording an event to represent this.
+func (e *eventStore) completeSnapshotAction() moleculer.Action {
+	return moleculer.Action{
+		Name: "completeSnapshot",
+		Handler: func(c moleculer.Context, params moleculer.Payload) interface{} {
+			snapshotID := params.Get("snapshotID").String()
+			events := e.eventStoreAdapter.FindAndUpdate(payload.New(M{
+				"query": M{"event": snapshotID, "eventType": TypeSnapshotCreated},
+				"limit": 1,
+				"update": M{
+					"eventType": TypeSnapshotCompleted,
+					"updated":   time.Now().Unix(),
+				},
+			}))
+			if events.Len() < 1 {
+				return errors.New("No snapshot found with id: " + snapshotID)
+			}
+			//e.StartEvents()
+			return nil
+		},
+	}
+}
+
+// failSnapshotAction fails a snapshot by recording the failure in the event record.
+func (e *eventStore) failSnapshotAction() moleculer.Action {
+	return moleculer.Action{
+		Name: "failSnapshot",
+		Handler: func(c moleculer.Context, params moleculer.Payload) interface{} {
+			snapshotID := params.Get("snapshotID").String()
+			events := e.eventStoreAdapter.FindAndUpdate(payload.New(M{
+				"query": M{"event": snapshotID, "eventType": TypeSnapshotCreated},
+				"limit": 1,
+				"update": M{
+					"eventType": TypeSnapshotFailed,
+					"updated":   time.Now().Unix(),
+				},
+			}))
+			if events.Len() < 1 {
+				return errors.New("No snapshot found with id: " + snapshotID)
+			}
+			//e.StartEvents()
+			return nil
+		},
+	}
+}
+
+// snapshotEvent create an snapshot event in the event store and stores the aggregate metadata as payload.
+func (e *eventStore) snapshotEvent(snapshotID string, aggregateMetadata map[string]interface{}) error {
+	event := M{
+		"event":     snapshotID,
+		"created":   time.Now().Unix(),
+		"status":    StatusComplete,
+		"eventType": TypeSnapshotCreated,
+		"payload":   e.serializer.PayloadToBytes(payload.New(aggregateMetadata)),
+	}
+
+	//save to the event store
+	r := <-e.brokerContext.Call(e.eventStoreService.Name+".create", event)
+	if r.IsError() {
+		return r.Error()
+	}
+	return nil
 }
 
 // parseExtraParams extract valid extra parameters
@@ -259,13 +415,14 @@ func (e *eventStore) validExtras(extras map[string]interface{}) bool {
 // fields return a map with fields that this event store needs in the adapter
 func (e *eventStore) fields() M {
 	f := M{
-		"event":      "string",
-		"version":    "integer",
-		"created":    "integer",
-		"updated":    "integer",
-		"status":     "integer",
-		"payload":    "[]byte",
-		"aggregates": "[]string",
+		"event":     "string",
+		"version":   "integer",
+		"created":   "integer",
+		"updated":   "integer",
+		"status":    "integer",
+		"eventType": "integer",
+		"payload":   "[]byte",
+		//"aggregates": "[]string", // is this to be used by the filter ?
 	}
 	if len(e.extraFields) > 0 {
 		for k, v := range e.extraFields {
