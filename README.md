@@ -1,5 +1,13 @@
 # cqrs
-CQRS Pluggin and components
+
+CQRS Mixins
+
+Make you life easy when doing CQRS back-ends :)
+
+```
+
+```
+
 
 
 ## Snapshots
@@ -29,6 +37,4 @@ snapshotName := aggregate.snapshot():
  - system is eventually consistent :)
 
 
-## Event Store
-
-Write test cases for the lifecyc;e variable "dispatchEventsStopped"
+## Event Store 
