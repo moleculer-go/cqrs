@@ -8,22 +8,13 @@ import (
 	"github.com/moleculer-go/store/sqlite"
 )
 
-// resolveSQLiteURI check if is memory of file based db.
-func resolveSQLiteURI(settings map[string]interface{}) string {
-	folder, ok := settings["sqliteFolder"]
-	if !ok || folder.(string) == "memory" {
-		return "file:memory:?mode=memory"
-	}
-	return "file://" + folder.(string)
-}
-
 // storeFactory high order func that returns a cqrs.StoreFactory function :)
 // and merges the fields passed to this function, with the fields received by the cqrs.StoreFactory func.
 func storeFactory(fields ...map[string]interface{}) cqrs.StoreFactory {
 	return func(name string, cqrsFields, settings map[string]interface{}) store.Adapter {
 		fields = append(fields, cqrsFields)
 		return &sqlite.Adapter{
-			URI:     resolveSQLiteURI(settings),
+			URI:     "file:memory:?mode=memory",
 			Table:   name,
 			Columns: cqrs.FieldsToSQLiteColumns(fields...),
 		}
