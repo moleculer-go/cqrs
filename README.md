@@ -1,10 +1,11 @@
-# CQRS Implementation using Moleculer-Go
-
-CQRS Mixins
+# CQRS Mixin - Moleculer-Go
 
 Make you life easy when doing CQRS back-ends :)
 
+If you need some info on what CQRS is please [click here :)](https://blog.knoldus.com/cqrs-and-event-sourcing/)
+
 ## Imports
+At minimum you will need ...
 ```go
 import (
 	"github.com/moleculer-go/cqrs"
@@ -14,47 +15,99 @@ import (
 )
 ```
 
-```go
-//event store
-var events = cqrs.EventStore("propertyEventStore", storeFactory())
+## Event Store
 
-// create an aggregate (simple table to store computed values)
+
+![Event Store](docs/CQRS-persist-event.jpg "Event Store")
+1) The first piece is the event store which is responsible to store the events (aka commands) and also propagate events to be processed and stored in aggregates.
+
+	1.1 - The event store uses an adaptor to store the data allowing you to choose between multiple data stores. In this example we use SQLite. Once the event is saved for later processing the event store returns a success response. This operation goal is to be fast and reliable.
+
+	1.2 - The event store will dispatch each event and any service that subscribes to the event "profile.updated" will be able to process is it.
+
+2) The second piece is the service that will expose the action to be triggered by an api call.
+
+	The action is responsible to perform validation and modification to the payload before saving the event. The action should not call any expensive service/action/lib at this stage since the objective is to save the event (aka write the command) as soon as possible. Complicated or expensive rules should be done later when the event is dispatched.
+
+	In this case the "profile.update" action maps directly to the event store using ```events.PersistEvent("profile.updated")```.
+
+3) The third piece is the Aggregate which is where you will store your data. More details on that later.
+
+
+```go
+//1. event store
+var events = cqrs.EventStore("profileEventStore", storeFactory())
+
+//2. profile service with actions and CQRS transformations
+var Service = moleculer.ServiceSchema{
+	Name:   "profile",
+	Mixins: []moleculer.Mixin{events.Mixin(), propertiesAggregate.Mixin(), summaryAggregate.Mixin()},
+	Actions: []moleculer.Action{
+        {
+			Name:    "update",
+			Handler: events.PersistEvent("profile.updated"),
+		},
+		//** Incomplete profile service **//
+	}
+}
+```
+
+## Aggregates
+Aggregates are where you store your data in the way you want to consume it. Basically you will query your aggregates.
+
+If you have a screen that need to display the user profile you need an aggregate for that.
+
+If you want some statistics (total, totalMarried, totalStudents) by country you need an aggregate for that.
+
+![Aggregates](docs/CQRS-aggregates.jpg "Aggregates")
+```go
+//3. create an aggregate (simple table to store computed values)
 var summaryAggregate = cqrs.Aggregate(
-	"propertySummaryAggregate",
+	"profileSummaryAggregate",
 	storeFactory(map[string]interface{}{
-		"countryCode": "string",
-		"total":       "integer",
-		"beachCity":   "integer",
-		"mountain":    "integer",
+		"country": "string",
+		"total": "integer",
+		"totalMarried": "integer",
+		"totalStudents": "integer",
 	}),
 	cqrs.NoSnapshot,
 ).Snapshot("propertyEventStore")
 
-//service that expose the actions and perform the transformation
+//now complete profile service with transform action and event mapping
 var Service = moleculer.ServiceSchema{
-	Name:   "property",
+	Name:   "profile",
 	Mixins: []moleculer.Mixin{events.Mixin(), propertiesAggregate.Mixin(), summaryAggregate.Mixin()},
 	Actions: []moleculer.Action{
+		//2. profile.update action just persists the payload in the store
         {
-			Name:    "create",
-			Handler: events.PersistEvent("property.created"),
+			Name:    "update",
+			Handler: events.PersistEvent("profile.updated"),
 		},
 		{
-			Name:    "transformCountrySummary",
-			Handler: transformCountrySummary,
+			Name:    "transformProfileSummary",
+			Handler: transformProfileSummary,
 		},
 	},
 	Events: []moleculer.Event{
-		summaryAggregate.On("property.created").Update("property.transformCountrySummary"),
+		//1.2 mapping the event "profile.updated" to update the summaryAggregate aggregate using the transformation "profile.transformProfileSummary".
+		summaryAggregate.On("profile.updated").Update("profile.transformProfileSummary"),
 	},
-}
+```
 
-// transformCountrySummary transform the property created event
-// into a country summary update.
-func transformCountrySummary(context moleculer.Context, event moleculer.Payload) interface{} {
-	property := event.Get("payload")
-	summary := <-context.Call("propertySummaryAggregate.find", map[string]interface{}{
-		"countryCode": property.Get("countryCode").String(),
+## Transformations
+
+Between your event and your aggregates you need to transform the data.
+In a traditional app where in the controller or business object  you have assemble/transform all the data from the request to the format acceptable in your database.
+This exactly the same thing you do here, but you start with the event and end with a aggregate record that will be wither: be created, update or removed.
+
+The example bellow will create or update a summary record.
+```go
+//2.1 transforms the contents of the event "profile.created"
+// into a profile summary update.
+func transformProfileSummary(context moleculer.Context, event moleculer.Payload) interface{} {
+	profile := event.Get("payload")
+	summary := <-context.Call("profileSummaryAggregate.find", map[string]interface{}{
+		"country": profile.Get("country").String(),
 	})
 	result := map[string]interface{}{}
 	if summary.Len() > 0 {
@@ -62,49 +115,43 @@ func transformCountrySummary(context moleculer.Context, event moleculer.Payload)
 		result["id"] = summary.Get("id").String()
 	} else {
 		summary = payload.New(map[string]interface{}{
-			"countryCode": property.Get("countryCode").String(),
-			"beachCity":   0,
-			"mountain":    0,
-			"total":       0,
+			"country": profile.Get("countryCode").String(),
+			"total": 0,
+			"totalMarried": 0,
+			"totalStudents": 0,
 		})
 	}
 	result["total"] = summary.Get("total").Int() + 1
-	if isBeachCity(property) {
-		result["beachCity"] = summary.Get("beachCity").Int() + 1
+	if isMarried(profile) {
+		result["totalMarried"] = summary.Get("totalMarried").Int() + 1
 	}
-	if isMountain(property) {
-		result["mountain"] = summary.Get("mountain").Int() + 1
+	if isStudent(profile) {
+		result["totalStudents"] = summary.Get("totalStudents").Int() + 1
 	}
-	result["countryCode"] = summary.Get("countryCode").String()
+	result["country"] = summary.Get("country").String()
 	return result
 }
 
 // ...
 // using it
 
-//create a property
-property := <-bkr.Call("property.create", M{
-			"name":        "Beach Villa",
-			"active":      true,
-			"bathrooms":   1.5,
-			"city":        "Wanaka",
-			"countryCode": "NZ",
+//updating a profile
+profile := <-bkr.Call("profile.update", M{
+			"name":        "John",
+			"married":      true,
+			"country": "NZ",
 		})
 
-// propertySummaryAggregate now contains a record for coutnry code NZ and mountain = 1 and total = 1
+// profileSummaryAggregate now contains a record for country code NZ and totalMarried = 1 and total = 1
 
 // see more in the examples folder.
 
 ```
 
 
-## Event Store
+### Store Adaptor
 
 ```go
-// this creates a event store called propertyEventStore
-// storeFactory() is displayed bellow
-var events = cqrs.EventStore("propertyEventStore", storeFactory())
-
 // ...
 // storeFactory high order func that returns a cqrs.StoreFactory function :)
 // and merges the fields passed to this function, with the fields received by the cqrs.StoreFactory func.
@@ -171,8 +218,8 @@ var Service = moleculer.ServiceSchema{
 
 ## Aggregates
 
-Aggregates are database tables. Simple as that. They store the "calculated values" or the "state of the system" :)
-Basically there are never queries on events. Events are dispatched and any moleculer service can listen to the them.
+Aggregates are database tables, elastic search indexes and etc. Simple as that. They store the "calculated values" or the "current state of the system" :)
+Basically there are never queries on events. Events are dispatched and any moleculer services listen to the them.
 Aggregates have an api to map event -> transformation -> aggregate action
 ```go
  propertiesAggregate.On("property.created").Create("property.transformProperty"),
@@ -188,7 +235,7 @@ Aggregates have an api to map event -> transformation -> aggregate action
   In this case with SQLite we need to specify the fields in our aggregate.
   ```go
   var summaryAggregate = cqrs.Aggregate(
-	"propertySummaryAggregate",
+	"profileSummaryAggregate",
 	storeFactory(map[string]interface{}{
 		"countryCode": "string",
 		"total":       "integer",
@@ -201,13 +248,13 @@ Aggregates have an api to map event -> transformation -> aggregate action
   An aggregate contain all the actions available to any store (https://github.com/moleculer-go/store)
   So you can just do:
   ```go
-  summaries := <-bkr.Call("propertySummaryAggregate.find", M{})
+  summaries := <-bkr.Call("profileSummaryAggregate.find", M{})
   ```
 
 
 ## Snapshots
 
-Snapshots are a work in progress. basic is implemented and now under test.
+Snapshots are a work in progress. basic feature is implemented and now under stress test.
 
 snapshotName := aggregate.snapshot():
  - aggregate stops listening to events -> pause aggregate changes :)
@@ -231,3 +278,8 @@ snapshotName := aggregate.snapshot():
  - events start processing from the snapshot moment
  - ** system takes a while to catch up **
  - system is eventually consistent :)
+
+
+## References
+
+Diagram Source: https://app.creately.com/diagram/1hz4OEfdfxM/edit
