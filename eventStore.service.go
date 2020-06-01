@@ -277,11 +277,11 @@ func (e *eventStore) MapAction(actionName, eventName string, extraParams ...map[
 // that saves the payload as an event record inside the event store.
 // extraParams are label=value to be saved in the event record.
 // if it fails to save the event to the store it emits the event eventName.failed
-func (e *eventStore) MapEvent(eventName string, extraParams ...map[string]interface{}) moleculer.Event {
+func (e *eventStore) MapEvent(originEvent, persistentEvent string, extraParams ...map[string]interface{}) moleculer.Event {
 	return moleculer.Event{
-		Name: eventName,
+		Name: originEvent,
 		Handler: func(c moleculer.Context, p moleculer.Payload) {
-			e.saveEvent(c, p, eventName, extraParams...)
+			e.saveEvent(c, p, persistentEvent, extraParams...)
 		},
 	}
 }

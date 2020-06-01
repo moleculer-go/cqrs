@@ -11,7 +11,7 @@ type ManyTransformer func(context moleculer.Context, params moleculer.Payload) [
 type EventStorer interface {
 	Mixin() moleculer.Mixin
 
-	MapEvent(eventName string, extraParams ...map[string]interface{}) moleculer.Event
+	MapEvent(originEvent, persistentEvent string, extraParams ...map[string]interface{}) moleculer.Event
 
 	MapAction(actionName string, eventName string, extraParams ...map[string]interface{}) moleculer.Action
 
