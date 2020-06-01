@@ -68,10 +68,7 @@ var Service = moleculer.ServiceSchema{
 	Name:   "property",
 	Mixins: []moleculer.Mixin{events.Mixin(), propertiesAggregate.Mixin(), summaryAggregate.Mixin()},
 	Actions: []moleculer.Action{
-		{
-			Name:    "create",
-			Handler: events.PersistEvent("property.created"),
-		},
+		events.MapAction("create", "property.created"),
 		{
 			Name:    "transformProperty",
 			Handler: transformProperty,

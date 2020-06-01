@@ -65,10 +65,7 @@ var _ = Describe("CQRS Pluggin", func() {
 					},
 				},
 				Actions: []moleculer.Action{
-					{
-						Name:    "create",
-						Handler: eventStore.PersistEvent("property.created"),
-					},
+					eventStore.MapAction("create", "property.created"),
 				},
 			}
 			bkr := broker.New(&moleculer.Config{
@@ -192,10 +189,7 @@ var _ = Describe("CQRS Pluggin", func() {
 				Name:   "user",
 				Mixins: []moleculer.Mixin{eventStore.Mixin()},
 				Actions: []moleculer.Action{
-					{
-						Name:    "create",
-						Handler: eventStore.PersistEvent("user.created", M{"tag": "valueX"}),
-					},
+					eventStore.MapAction("create", "user.created", M{"tag": "valueX"}),
 				},
 			}
 			bkr := broker.New(&moleculer.Config{
@@ -258,10 +252,7 @@ var _ = Describe("CQRS Pluggin", func() {
 			Name:   "property",
 			Mixins: []moleculer.Mixin{eventStore.Mixin()},
 			Actions: []moleculer.Action{
-				{
-					Name:    "create",
-					Handler: eventStore.PersistEvent("property.created"),
-				},
+				eventStore.MapAction("create", "property.created"),
 			},
 		}
 		bkr := broker.New(&moleculer.Config{

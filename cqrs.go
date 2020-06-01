@@ -10,7 +10,10 @@ type ManyTransformer func(context moleculer.Context, params moleculer.Payload) [
 
 type EventStorer interface {
 	Mixin() moleculer.Mixin
-	PersistEvent(eventName string, extraParams ...map[string]interface{}) moleculer.ActionHandler
+
+	MapEvent(eventName string, extraParams ...map[string]interface{}) moleculer.Event
+
+	MapAction(actionName string, eventName string, extraParams ...map[string]interface{}) moleculer.Action
 
 	//try to move these to a interface just around snapshoter
 	// StartSnapshot(snapshotName string, aggregateMetadata map[string]interface{}) error

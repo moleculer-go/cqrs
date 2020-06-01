@@ -232,37 +232,57 @@ func (e *eventStore) createEventStoreService() {
 	}
 }
 
-// PersistEvent receives eventName and extraParams and returns an action handler
+func (e *eventStore) saveEvent(c moleculer.Context, p moleculer.Payload, eventName string, extraParams ...map[string]interface{}) interface{} {
+	event := M{
+		"event":     eventName,
+		"created":   time.Now().Unix(),
+		"status":    StatusCreated,
+		"eventType": TypeCommand,
+	}
+	//merge event with params
+	extra := e.parseExtraParams(extraParams)
+	if len(extra) > 0 {
+		for name, value := range extra {
+			event[name] = value
+		}
+	}
+	event["payload"] = e.serializer.PayloadToBytes(p)
+
+	//save to the event store
+	r := <-c.Call(e.eventStoreService.Name+".create", event)
+	if r.IsError() {
+		c.Emit(
+			eventName+".failed",
+			payload.Empty().Add("error", r).Add("event", event),
+		)
+		return r
+	}
+	return r
+}
+
+// MapAction receives actionName, eventName and extraParams and returns an moleculer.Action with an action handler
 // that saves the payload as an event record inside the event store.
 // extraParams are label=value to be saved in the event record.
 // if it fails to save the event to the store it emits the event eventName.failed
-func (e *eventStore) PersistEvent(eventName string, extraParams ...map[string]interface{}) moleculer.ActionHandler {
-	return func(c moleculer.Context, p moleculer.Payload) interface{} {
-		event := M{
-			"event":     eventName,
-			"created":   time.Now().Unix(),
-			"status":    StatusCreated,
-			"eventType": TypeCommand,
-		}
-		//merge event with params
-		extra := e.parseExtraParams(extraParams)
-		if len(extra) > 0 {
-			for name, value := range extra {
-				event[name] = value
-			}
-		}
-		event["payload"] = e.serializer.PayloadToBytes(p)
+func (e *eventStore) MapAction(actionName, eventName string, extraParams ...map[string]interface{}) moleculer.Action {
+	return moleculer.Action{
+		Name: actionName,
+		Handler: func(c moleculer.Context, p moleculer.Payload) interface{} {
+			return e.saveEvent(c, p, eventName, extraParams...)
+		},
+	}
+}
 
-		//save to the event store
-		r := <-c.Call(e.eventStoreService.Name+".create", event)
-		if r.IsError() {
-			c.Emit(
-				eventName+".failed",
-				payload.Empty().Add("error", r).Add("event", event),
-			)
-			return r
-		}
-		return r
+// MapEvent receives eventName and extraParams and returns an moleculer.Action with an action handler
+// that saves the payload as an event record inside the event store.
+// extraParams are label=value to be saved in the event record.
+// if it fails to save the event to the store it emits the event eventName.failed
+func (e *eventStore) MapEvent(eventName string, extraParams ...map[string]interface{}) moleculer.Event {
+	return moleculer.Event{
+		Name: eventName,
+		Handler: func(c moleculer.Context, p moleculer.Payload) {
+			e.saveEvent(c, p, eventName, extraParams...)
+		},
 	}
 }
 
