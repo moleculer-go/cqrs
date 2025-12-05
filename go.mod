@@ -7,5 +7,5 @@ require (
 	github.com/moleculer-go/store v1.0.6
 	github.com/onsi/ginkgo v1.16.5
 	github.com/onsi/gomega v1.19.0
-	github.com/sirupsen/logrus v1.4.2
+	github.com/sirupsen/logrus v1.8.3
 )
